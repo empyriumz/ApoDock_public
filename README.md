@@ -19,6 +19,7 @@ conda activate apodock
 ```
 Then install gvp-gnn:
 ```
+cd ApoDock_public
 git clone https://github.com/drorlab/gvp-pytorch.git
 cd gvp-pytorch
 pip install -e .
@@ -47,7 +48,7 @@ Use `.CSV` file for docking:
 python docking_esm_protein.py --csv docking_list.csv --packing
 ```
 -----------------------------------------------------------------------------------------------------
-Output example will in defalut dir `docking_results`, out you can use `--out_dir` option to determine the output position.
+Output example will in defalut dir `docking_results`,  you can use `--out_dir` option to determine the output position.
 
 
 -----------------------------------------------------------------------------------------------------

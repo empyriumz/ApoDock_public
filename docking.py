@@ -46,9 +46,6 @@ def rank_docking_results(docked_sdfs, mdn_scores, top_k=10, packing=True, dockin
     top_k_mol_list = sorted_mol_list[:top_k]
     top_k_mol_name_list = sorted_mol_name_list[:top_k]
     
-    # Extract base name from the first SDF file, assuming the naming convention holds
-    # base_name = os.path.splitext(os.path.basename(docked_sdfs[0]))[0]
-    # Use a part of the base name that includes protein info for clarity in file naming
     if packing:
         top_k_sdf_filename = f"Packed_top_{top_k}_{docking_program}_rescore_poses.sdf"
     else:
@@ -159,8 +156,7 @@ def flex_docking(
     This function docks a ligand to a protein using the flexible docking approach.
     """
     ids_list = [os.path.basename(i).split('_ligand')[0] for i in ligand_list]
-    # print(ligand_list)
-    # print(ids_list)
+
 
     if packing:
         cluster_packs_list =sc_pack(
@@ -179,33 +175,24 @@ def flex_docking(
             num_clusters=num_clusters
             )
         print("packing complete")
-        # print("cluster_packs_list:", cluster_packs_list)
+
 
     for ids in ids_list: 
         print(f"Docking {ids}....")
         ids_dir = os.path.dirname(pocket_list[ids_list.index(ids)])
-        # ligand_name = ids + ".sdf"
-        # if os.path.exists(os.path.join(ids_dir, "Packed_top_10_gnina_rescore_poses.sdf")):
-            # continue
+
         if ref_lig_list is not None:
             ref_lig = ref_lig_list[ids_list.index(ids)] 
         else:
             ref_lig = None
         ligand = ligand_list[ids_list.index(ids)]   
         if packing:
-            
-            # packed_pdb_names = [i for i in os.listdir(ids_dir) if "_pack_" in i and "_dock_" not in i]
-            # packed_pockets = cluster_packs_list[ids_list.index(ids)]
-            # selcect packed pocket cluster based on the ligand name
+
             packed_pockets = next((i for i in cluster_packs_list if any(ids in j for j in i)), None)
 
-                
             
-            print("packed_pockets:", packed_pockets)
-            # packed_pdb_paths = [os.path.join(ids_dir, i) for i in packed_pdb_names]
             out_sdfs = []
             # remove old docked sdf files
-            # old_files = [os.path.join(data_dir, ids, i) for i in os.listdir(data_dir) if i.endswith(".sdf") and "_pack_" in i]
             old_files = [os.path.join(ids_dir, i) for i in os.listdir(ids_dir) if i.endswith(".sdf") and "_pack_" in i]
 
             for old_file in old_files:
@@ -233,12 +220,7 @@ def flex_docking(
 
         else:
             print("only docking and rescoring the docked poses....")
-            # if ids == "6qrc" or ids == "6p8z" or ids == "6st3":
-            #     print(f"skip {ids}")
-            #     continue
-            # if os.path.exists(os.path.join(ids_dir, "Top_40_gnina_flex_rescore_poses.sdf")):
-            #     if os.path.getsize(os.path.join(ids_dir, "Top_40_gnina_flex_rescore_poses.sdf")) > 0:
-            #         continue
+
             packed_pdb = os.path.join(ids_dir, "Pocket_10A.pdb")
             out_sdf = vina_dock(
                             ligand,

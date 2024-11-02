@@ -416,23 +416,10 @@ def write_pdbs(
             temperature=2.0,
             apo2holo=False
             ):
-    """
-    Write PDB files for the designed protein structures.
-    Args:
-        model: A torch.nn.Module object.
-        data_dir: A str. The directory of the data.
-        device: A torch.device object.
-        number_of_packs_per_design: An int. The number of packs per design.
-    """
+
     # group pdbids based on batch size
     pdbids = [os.path.basename(i).split("_ligand")[0] for i in ligand_list]
-    # remove old packed files
-    # print("Removing old packed files")
-    # for pdbid in pdbids:
-    #     packed_files = [os.path.join(data_dir, pdbid, i) for i in os.listdir(os.path.join(data_dir, pdbid)) if i.endswith(".pdb") and "_pack_" in i]
-    #     for packed_file in packed_files:
-    #         os.remove(packed_file)
-    # print("Old packed files removed")
+
     pdbid_list = [pdbids[i:i + batch_size] for i in range(0, len(pdbids), batch_size)]
 
     # print(out_dir)
@@ -441,8 +428,7 @@ def write_pdbs(
     packed_files_list = []
 
     
-        # clean the cuda memory
-        # torch.cuda.empty_cache()
+
     results_list = sample_xyz(ligand_list, pocket_list, protein_list, model, device, batch_size, number_of_packs_per_design, temperature, n_recycle=3, ligandmpnn_path=ligandmpnn_path, apo2holo=apo2holo)
     CA_icodes, Chain_letters = get_letter_codes(pocket_list)
     CA_icodes_list = [CA_icodes[i:i + batch_size] for i in range(0, len(CA_icodes), batch_size)]
@@ -456,8 +442,6 @@ def write_pdbs(
             assert len(pdbids) == len(result["final_X"]) == len(CA_icodes) == len(Chain_letters)
             for k, pdbid in enumerate(pdbids):
                 
-                # pdb_file = os.path.join(data_dir, pdbid, f"{pdbid}_pack_{i}.pdb")
-                # pdb_file = os.path.join(os.path.dirname(pocket_list[0]), f"{pdbid}_pack_{i}.pdb")
                 if not os.path.exists(out_dirs[k]):
                     os.makedirs(out_dirs[k])
                 pdb_file = os.path.join(out_dirs[k], f"{pdbid}_pack_{i}.pdb")
@@ -520,7 +504,7 @@ def sc_pack(
 def main():
     data_dir = "./test"
     mode_sc = Pack()
-    load_model_dict(mode_sc, "./model/20240720_191255_MPNN_repeat0/model/epoch-14, train_loss-1.9887, valid_loss-2.2731, valid_chi-2.2731, valid_rmsd-0.1106, valid_rotamer_recovery-0.7419.pt")
+    load_model_dict(mode_sc, "./model/20240720_191255_MPNN_repeat0/model/epoch-214, train_loss-1.4887, valid_loss-2.2731, valid_chi-2.2731, valid_rmsd-0.1106, valid_rotamer_recovery-0.7419.pt")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_sc = mode_sc.to(device)
     write_pdbs(model_sc, data_dir, device, number_of_packs_per_design=5)
@@ -528,15 +512,9 @@ def main():
 
 
 if __name__ == "__main__":
-    data_dir = "./test"
-    mode_sc = Pack(recycle_strategy="sample")
-    # load_model_dict(mode_sc, "./model/20240713_133336_MPNN_repeat0/model/epoch-31, train_loss-2.0397, valid_loss-2.2423, valid_chi-2.2423, valid_rmsd-0.1777, valid_rotamer_recovery-0.7452.pt")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = mode_sc.to(device)
-    batch_size = 16
-    number_of_packs_per_design=40
-    cpkt_path = "./model/20240720_191255_MPNN_repeat0/model/epoch-14, train_loss-1.9887, valid_loss-2.2731, valid_chi-2.2731, valid_rmsd-0.1106, valid_rotamer_recovery-0.7419.pt"
-    sc_pack(data_dir,model, cpkt_path, device, batch_size, number_of_packs_per_design)
+    main()
+
+
             
 
 
