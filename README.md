@@ -26,7 +26,7 @@ pip install -e .
 
 ## Quick start
 
-First, you need to download the binary sampling software [Gnina](https://github.com/gnina/gnina/releases/download/v1.1/gnina) or [Smina] (https://sourceforge.net/projects/smina/) to `docking_program` dir, then give execution permission:
+First, you need to download the binary sampling software [Gnina](https://github.com/gnina/gnina/releases/download/v1.1/gnina) or [Smina](https://sourceforge.net/projects/smina/) to `docking_program` dir, then give execution permission:
 ```
 chmod +x Gnina
 chmod +x Smina.static
@@ -43,7 +43,9 @@ A demo:
 python docking.py --protein ./demo/1a0q/1a0q_protein.pdb --ligand ./demo/1a0q/1a0q_ligand.sdf --ref_lig ./demo/1a0q/1a0q_ligand.sdf --packing
 ```
 Use `.CSV` file for docking:
+```
 python docking_esm_protein.py --csv docking_list.csv --packing
+```
 -----------------------------------------------------------------------------------------------------
 Output example will in defalut dir `docking_results`, out you can use `--out_dir` option to determine the output position.
 
