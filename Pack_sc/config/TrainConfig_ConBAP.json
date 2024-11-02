@@ -1,0 +1,36 @@
+{
+    "train":
+    {
+        "model": "ConBAP", 
+        "data_root" : "./data/pdbbind",
+        "save_dir" : "./model",
+        "graph_type" : "ConBAP",
+        "repeat" : 1,
+        "fold" : 0,
+        "epochs" : 5000,
+        "batch_size" :64,
+        "early_stop_epoch" : 200,
+        "save_model": true, 
+        "create" : true,
+        "mark": null,
+        "aff_weight" : 0.0,
+        "lr" : 0.001,
+        "weight_decay" : 0.00001,
+        "dropout" : 0.10,
+        "hid_dim" : 256,
+        "num_heads" : 1,
+        "num_layers" : 6,
+        "dis_threshold_train" : 7,
+        "dis_threshold_vaild" : 5,
+        "interact_type" : "product",
+        "training_set" : "train1",
+        "crossAttention" : true,
+        "atten_active_fuc" : "softmax",
+        "position_embed" : false,
+        "intra_mol" : 5,
+        "num_gaussians_dist" : 10,
+        "num_gaussians_theta" : 0,
+        "num_gaussians_phi" : 0
+  
+    }
+  }

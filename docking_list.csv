@@ -1,0 +1,4 @@
+ligand,protein,ref_lig
+./demo/1a0q/1a0q_ligand.sdf,./demo/1a0q/1a0q_protein.pdb,./demo/1a0q/1a0q_ligand.sdf
+./demo/6qqw/6qqw_ligand.sdf,./demo/6qqw/6qqw_protein.pdb,./demo/6qqw/6qqw_ligand.sdf
+../apodock/test/posebuster_dataset/posebusters_benchmark_set/5S8I_2LY/5S8I_2LY_ligand.sdf,../apodock/test/posebuster_dataset/posebusters_benchmark_set/5S8I_2LY/5S8I_2LY_protein.pdb,../apodock/test/posebuster_dataset/posebusters_benchmark_set/5S8I_2LY/5S8I_2LY_ligand.sdf
