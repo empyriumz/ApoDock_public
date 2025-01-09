@@ -1,12 +1,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/ld139/ApoDock_public)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv2024.02.24.581708-green)](https://doi.org/10.1101/2024.11.22.624942)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv2024.11.22.624942-green)](https://doi.org/10.1101/2024.11.22.624942)
 
 
 # ApoDock
 <div align=center>
 <img src='./toc.svg' width='600',height="300px">
 </div> 
-
 
 
 ApoDock is a modular docking paradigm that combines machine learning-driven conditional side-chain packing based on protein backbone and ligand information with traditional sampling methods to ensure physically realistic poses.
