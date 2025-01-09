@@ -1,3 +1,7 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/ld139/ApoDock_public)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv2024.02.24.581708-green)](https://doi.org/10.1101/2024.11.22.624942)
+
+
 # ApoDock
 
 
@@ -13,7 +17,7 @@ To run ApoDock, clone this GitHub repository and install Python.
 
 ## Install Dependencies
 ```
-conda env create -f Enviroment.yaml
+conda env create -f environment.yaml
 conda activate apodock
 
 ```
@@ -45,11 +49,14 @@ python docking.py --protein ./demo/1a0q/1a0q_protein.pdb --ligand ./demo/1a0q/1a
 ```
 Use `.CSV` file for docking:
 ```
-python docking_esm_protein.py --csv docking_list.csv --packing
+python docking.py --csv docking_list.csv --packing
 ```
 -----------------------------------------------------------------------------------------------------
 Output example will in defalut dir `docking_results`,  you can use `--out_dir` option to determine the output position.
 
 
 -----------------------------------------------------------------------------------------------------
+
+## Acknowledgements
+This work draws upon code from ProteinMPNN(https://github.com/dauparas/ProteinMPNN), OpenFold(https://github.com/aqlaboratory/openfold), RTMscore(https://github.com/sc8668/RTMScore), and PIPPack(https://github.com/Kuhlman-Lab/PIPPack), and we would like to thank them for their excellent contributions. these studies are important and interesting.
 
