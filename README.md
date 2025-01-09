@@ -58,5 +58,5 @@ Output example will in defalut dir `docking_results`,  you can use `--out_dir` o
 -----------------------------------------------------------------------------------------------------
 
 ## Acknowledgements
-This work draws upon code from ProteinMPNN(https://github.com/dauparas/ProteinMPNN), OpenFold(https://github.com/aqlaboratory/openfold), RTMscore(https://github.com/sc8668/RTMScore), and PIPPack(https://github.com/Kuhlman-Lab/PIPPack), and we would like to thank them for their excellent contributions. these studies are important and interesting.
+This work draws upon code from [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), [OpenFold](https://github.com/aqlaboratory/openfold), [RTMscore](https://github.com/sc8668/RTMScore), and [PIPPack](https://github.com/Kuhlman-Lab/PIPPack), and we would like to thank them for their excellent contributions. these studies are important and interesting.
 
