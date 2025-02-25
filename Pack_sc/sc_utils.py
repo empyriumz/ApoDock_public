@@ -1,5 +1,3 @@
-import sys
-
 import numpy as np
 import torch
 import torch.distributions as D
@@ -57,101 +55,6 @@ map_mpnn_to_af2_seq = torch.tensor(
 )
 
 
-def pack_side_chains(
-    feature_dict,
-    model_sc,
-    num_denoising_steps,
-    num_samples=10,
-    repack_everything=True,
-    num_context_atoms=16,
-):
-    device = feature_dict["X"].device
-    torsion_dict = make_torsion_features(feature_dict, repack_everything)
-    feature_dict["X"] = torsion_dict["xyz14_noised"]
-    feature_dict["X_m"] = torsion_dict["xyz14_m"]
-    if "Y" not in list(feature_dict):
-        feature_dict["Y"] = torch.zeros(
-            [
-                feature_dict["X"].shape[0],
-                feature_dict["X"].shape[1],
-                num_context_atoms,
-                3,
-            ],
-            device=device,
-        )
-        feature_dict["Y_t"] = torch.zeros(
-            [feature_dict["X"].shape[0], feature_dict["X"].shape[1], num_context_atoms],
-            device=device,
-        )
-        feature_dict["Y_m"] = torch.zeros(
-            [feature_dict["X"].shape[0], feature_dict["X"].shape[1], num_context_atoms],
-            device=device,
-        )
-    h_V, h_E, E_idx = model_sc.encode(feature_dict)
-    feature_dict["h_V"] = h_V
-    feature_dict["h_E"] = h_E
-    feature_dict["E_idx"] = E_idx
-    for step in range(num_denoising_steps):
-        mean, concentration, mix_logits = model_sc.decode(feature_dict)
-        # print(mean.shape, concentration.shape, mix_logits.shape)
-        mix = D.Categorical(logits=mix_logits)
-        # print(mix)
-        comp = D.VonMises(mean, concentration)
-        pred_dist = D.MixtureSameFamily(mix, comp)
-        
-        predicted_samples = pred_dist.sample([num_samples])
-        print(pred_dist)
-        log_probs_of_samples = pred_dist.log_prob(predicted_samples)
-        sample = torch.gather(
-            predicted_samples, dim=0, index=torch.argmax(log_probs_of_samples, 0)[None,]
-        )[0,]
-        torsions_pred_unit = torch.cat(
-            [torch.sin(sample[:, :, :, None]), torch.cos(sample[:, :, :, None])], -1
-        )
-        torsion_dict["torsions_noised"][:, :, 3:] = torsions_pred_unit * torsion_dict[
-            "mask_fix_sc"
-        ] + torsion_dict["torsions_true"] * (1 - torsion_dict["mask_fix_sc"])
-        pred_frames = feats.torsion_angles_to_frames(
-            torsion_dict["rigids"],
-            torsion_dict["torsions_noised"],
-            torsion_dict["aatype"],
-            torch.tensor(restype_rigid_group_default_frame, device=device),
-        )
-        xyz14_noised = feats.frames_and_literature_positions_to_atom14_pos(
-            pred_frames,
-            torsion_dict["aatype"],
-            torch.tensor(restype_rigid_group_default_frame, device=device),
-            torch.tensor(restype_atom14_to_rigid_group, device=device),
-            torch.tensor(restype_atom14_mask, device=device),
-            torch.tensor(restype_atom14_rigid_group_positions, device=device),
-        )
-        xyz14_noised = xyz14_noised * feature_dict["X_m"][:, :, :, None]
-        feature_dict["X"] = xyz14_noised
-        S_af2 = torsion_dict["S_af2"]
-
-    feature_dict["X"] = xyz14_noised
-
-    log_prob = pred_dist.log_prob(sample) * torsion_dict["mask_fix_sc"][
-        ..., 0
-    ] + 2.0 * (1 - torsion_dict["mask_fix_sc"][..., 0])
-
-    tmp_types = torch.tensor(restype_atom14_to_rigid_group, device=device)[S_af2]
-    tmp_types[tmp_types < 4] = 4
-    tmp_types -= 4
-    atom_types_for_b_factor = torch.nn.functional.one_hot(tmp_types, 4)  # [B, L, 14, 4]
-
-    uncertainty = log_prob[:, :, None, :] * atom_types_for_b_factor  # [B,L,14,4]
-    b_factor_pred = uncertainty.sum(-1)  # [B, L, 14]
-    feature_dict["b_factors"] = b_factor_pred
-    feature_dict["mean"] = mean
-    feature_dict["concentration"] = concentration
-    feature_dict["mix_logits"] = mix_logits
-    feature_dict["log_prob"] = log_prob
-    feature_dict["sample"] = sample
-    feature_dict["true_torsion_sin_cos"] = torsion_dict["torsions_true"]
-    return feature_dict
-
-
 def make_torsion_features(feature_dict, repack_everything=True):
     device = feature_dict["mask"].device
 
@@ -181,7 +84,7 @@ def make_torsion_features(feature_dict, repack_everything=True):
         ca_xyz=xyz37[:, :, 1, :],
         c_xyz=xyz37[:, :, 2, :],
         eps=1e-9,
-    ) # 
+    )  #
 
     if not repack_everything:
         xyz37_true = feature_dict["xyz_37"]
@@ -211,14 +114,14 @@ def make_torsion_features(feature_dict, repack_everything=True):
     torsions_noised[:, :, 3:] = random_sin_cos * mask_fix_sc + torsions_true * (
         1 - mask_fix_sc
     )  # [B, L, 4, 2]
-    
+
     # print(torsions_noised.shape)
     # print(rigids.shape)
     # print(S_af2.shape)
     pred_frames = feats.torsion_angles_to_frames(
-        rigids, # 
+        rigids,  #
         torsions_noised,
-        S_af2, # 
+        S_af2,  #
         torch.tensor(restype_rigid_group_default_frame, device=device),
     )
     # print(pred_frames.shape)
@@ -397,10 +300,14 @@ class Packer(nn.Module):
             h_V = layer(h_V, h_EV, mask)
 
         torsions = self.W_torsions(h_V)
-        torsions = torsions.reshape(h_V.shape[0], h_V.shape[1], 4, self.num_mix, 3) # [B, L, 4, num_mix, 3]
-        mean = torsions[:, :, :, :, 0].float() # [B, L, 4, num_mix]
-        concentration = 0.1 + self.softplus(torsions[:, :, :, :, 1]).float() # [B, L, 4, num_mix]
-        mix_logits = torsions[:, :, :, :, 2].float() # [B, L, 4, num_mix]
+        torsions = torsions.reshape(
+            h_V.shape[0], h_V.shape[1], 4, self.num_mix, 3
+        )  # [B, L, 4, num_mix, 3]
+        mean = torsions[:, :, :, :, 0].float()  # [B, L, 4, num_mix]
+        concentration = (
+            0.1 + self.softplus(torsions[:, :, :, :, 1]).float()
+        )  # [B, L, 4, num_mix]
+        mix_logits = torsions[:, :, :, :, 2].float()  # [B, L, 4, num_mix]
         return mean, concentration, mix_logits
 
 
@@ -984,7 +891,7 @@ class ProteinFeatures(nn.Module):
                 )
         RBF_all = torch.cat(tuple(RBF_all), dim=-1)
 
-        offset = R_idx[:, :, None] - R_idx[:, None, :] #  [B, L] -
+        offset = R_idx[:, :, None] - R_idx[:, None, :]  #  [B, L] -
         offset = gather_edges(offset[:, :, :, None], E_idx)[:, :, :, 0]  # [B, L, K]
 
         d_chains = (
@@ -1170,4 +1077,3 @@ class ProteinFeatures(nn.Module):
         F = self.dec_edge_embedding1(F)
         F = self.dec_norm_edges1(F)
         return V, F
-

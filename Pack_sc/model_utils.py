@@ -366,7 +366,11 @@ class ProteinMPNN(torch.nn.Module):
 
             decoding_order = torch.tensor(
                 list(itertools.chain(*new_decoding_order)), device=device
-            )[None,].repeat(B, 1)
+            )[
+                None,
+            ].repeat(
+                B, 1
+            )
 
             permutation_matrix_reverse = torch.nn.functional.one_hot(
                 decoding_order, num_classes=L
@@ -474,18 +478,10 @@ class ProteinMPNN(torch.nn.Module):
         use_sequence - False using backbone info only
         """
         B_decoder = feature_dict["batch_size"]
-        S_true_enc = feature_dict[
-            "S"
-        ]
-        mask_enc = feature_dict[
-            "mask"
-        ]
-        chain_mask_enc = feature_dict[
-            "chain_mask"
-        ]
-        randn = feature_dict[
-            "randn"
-        ]
+        S_true_enc = feature_dict["S"]
+        mask_enc = feature_dict["mask"]
+        chain_mask_enc = feature_dict["chain_mask"]
+        randn = feature_dict["randn"]
         B, L = S_true_enc.shape
         device = S_true_enc.device
 
@@ -501,10 +497,10 @@ class ProteinMPNN(torch.nn.Module):
             S_true = torch.clone(S_true_enc)
             if not use_sequence:
                 order_mask = torch.zeros(chain_mask_enc.shape[1], device=device).float()
-                order_mask[idx] = 1.
+                order_mask[idx] = 1.0
             else:
                 order_mask = torch.ones(chain_mask_enc.shape[1], device=device).float()
-                order_mask[idx] = 0.
+                order_mask[idx] = 0.0
             decoding_order = torch.argsort(
                 (order_mask + 0.0001) * (torch.abs(randn))
             )  # [numbers will be smaller for places where chain_M = 0.0 and higher for places where chain_M = 1.0]
@@ -543,10 +539,10 @@ class ProteinMPNN(torch.nn.Module):
 
             logits = self.W_out(h_V)
             log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-            
-            log_probs_out[:,idx,:] = log_probs[:,idx,:]
-            logits_out[:,idx,:] = logits[:,idx,:]
-            decoding_order_out[:,idx,:] = decoding_order
+
+            log_probs_out[:, idx, :] = log_probs[:, idx, :]
+            logits_out[:, idx, :] = logits[:, idx, :]
+            decoding_order_out[:, idx, :] = decoding_order
 
         output_dict = {
             "S": S_true,
@@ -556,24 +552,13 @@ class ProteinMPNN(torch.nn.Module):
         }
         return output_dict
 
-
     def score(self, feature_dict, use_sequence: bool):
         B_decoder = feature_dict["batch_size"]
-        S_true = feature_dict[
-            "S"
-        ]
-        mask = feature_dict[
-            "mask"
-        ]
-        chain_mask = feature_dict[
-            "chain_mask"
-        ]
-        randn = feature_dict[
-            "randn"
-        ]
-        symmetry_list_of_lists = feature_dict[
-            "symmetry_residues"
-        ]
+        S_true = feature_dict["S"]
+        mask = feature_dict["mask"]
+        chain_mask = feature_dict["chain_mask"]
+        randn = feature_dict["randn"]
+        symmetry_list_of_lists = feature_dict["symmetry_residues"]
         B, L = S_true.shape
         device = S_true.device
 
@@ -610,7 +595,11 @@ class ProteinMPNN(torch.nn.Module):
 
             decoding_order = torch.tensor(
                 list(itertools.chain(*new_decoding_order)), device=device
-            )[None,].repeat(B, 1)
+            )[
+                None,
+            ].repeat(
+                B, 1
+            )
 
             permutation_matrix_reverse = torch.nn.functional.one_hot(
                 decoding_order, num_classes=L
@@ -646,7 +635,7 @@ class ProteinMPNN(torch.nn.Module):
         h_EXV_encoder_fw = mask_fw * h_EXV_encoder
         if not use_sequence:
             for layer in self.decoder_layers:
-                h_V = layer(h_V, h_EXV_encoder_fw, mask)          
+                h_V = layer(h_V, h_EXV_encoder_fw, mask)
         else:
             for layer in self.decoder_layers:
                 # Masked positions attend to encoder information, unmasked see.
@@ -1671,25 +1660,29 @@ class DecLayer(torch.nn.Module):
     def forward(self, h_V, h_E, mask_V=None, mask_attend=None):
         """Parallel computation of full transformer layer"""
         # h_V: [B, L, C_v] h_E: [B, L, K, C_e] mask_V: [B, L] mask_attend: [B, L, K]
-        # Concatenate h_V_i to h_E_ij  
-        h_V_expand = h_V.unsqueeze(-2).expand(-1, -1, h_E.size(-2), -1) # [B, L, C_v] => [B, L, 1, C_v] => [B, L, K, C_v]
-        h_EV = torch.cat([h_V_expand, h_E], -1) # [B, L, K, C_v + C_e]
+        # Concatenate h_V_i to h_E_ij
+        h_V_expand = h_V.unsqueeze(-2).expand(
+            -1, -1, h_E.size(-2), -1
+        )  # [B, L, C_v] => [B, L, 1, C_v] => [B, L, K, C_v]
+        h_EV = torch.cat([h_V_expand, h_E], -1)  # [B, L, K, C_v + C_e]
 
-        h_message = self.W3(self.act(self.W2(self.act(self.W1(h_EV))))) # [B, L, K, C_v]    
+        h_message = self.W3(
+            self.act(self.W2(self.act(self.W1(h_EV))))
+        )  # [B, L, K, C_v]
         if mask_attend is not None:
             h_message = mask_attend.unsqueeze(-1) * h_message
         dh = torch.sum(h_message, -2) / self.scale  # [B, L, C_v]
 
-        h_V = self.norm1(h_V + self.dropout1(dh))                # [B, L, C_v]
+        h_V = self.norm1(h_V + self.dropout1(dh))  # [B, L, C_v]
 
-        # Position-wise feedforward 
-        dh = self.dense(h_V) # [B, L, C_v*4]
-        h_V = self.norm2(h_V + self.dropout2(dh))  
+        # Position-wise feedforward
+        dh = self.dense(h_V)  # [B, L, C_v*4]
+        h_V = self.norm2(h_V + self.dropout2(dh))
 
         if mask_V is not None:
             mask_V = mask_V.unsqueeze(-1)
             h_V = mask_V * h_V
-        return h_V 
+        return h_V
 
 
 class EncLayer(torch.nn.Module):
@@ -1718,17 +1711,21 @@ class EncLayer(torch.nn.Module):
         """Parallel computation of full transformer layer"""
         # 先用边的信息更新节点的信息
         h_EV = cat_neighbors_nodes(h_V, h_E, E_idx)  # [B, L, K, C_v + C_e]
-        h_V_expand = h_V.unsqueeze(-2).expand(-1, -1, h_EV.size(-2), -1)  # [B, L, C_v] => [B, L, 1, C_v] => [B, L, K, C_v]
-        h_EV = torch.cat([h_V_expand, h_EV], -1) # [B, L, K, 2*C_v + C_e]
-        h_message = self.W3(self.act(self.W2(self.act(self.W1(h_EV)))))   # 在这里C_v = C_e, 所以h_EV的最后一维是3*C_v, h_message的最后一维是C_v
+        h_V_expand = h_V.unsqueeze(-2).expand(
+            -1, -1, h_EV.size(-2), -1
+        )  # [B, L, C_v] => [B, L, 1, C_v] => [B, L, K, C_v]
+        h_EV = torch.cat([h_V_expand, h_EV], -1)  # [B, L, K, 2*C_v + C_e]
+        h_message = self.W3(
+            self.act(self.W2(self.act(self.W1(h_EV))))
+        )  # 在这里C_v = C_e, 所以h_EV的最后一维是3*C_v, h_message的最后一维是C_v
         # h_message.shape = [B, L, K, C_v]
         if mask_attend is not None:
             h_message = mask_attend.unsqueeze(-1) * h_message
         dh = torch.sum(h_message, -2) / self.scale
         h_V = self.norm1(h_V + self.dropout1(dh))
 
-        dh = self.dense(h_V)   # [B, L, C_v*4]
-        h_V = self.norm2(h_V + self.dropout2(dh)) # [B, L, C_v]
+        dh = self.dense(h_V)  # [B, L, C_v*4]
+        h_V = self.norm2(h_V + self.dropout2(dh))  # [B, L, C_v]
         if mask_V is not None:
             mask_V = mask_V.unsqueeze(-1)
             h_V = mask_V * h_V
@@ -1770,4 +1767,4 @@ def gather_nodes_t(nodes, neighbor_idx):
 def cat_neighbors_nodes(h_nodes, h_neighbors, E_idx):
     h_nodes = gather_nodes(h_nodes, E_idx)
     h_nn = torch.cat([h_neighbors, h_nodes], -1)
-    return h_nn # [B, L, K, C_v + C_e]
+    return h_nn  # [B, L, K, C_v + C_e]

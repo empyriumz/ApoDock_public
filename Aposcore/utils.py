@@ -1,5 +1,5 @@
 import torch
-import gvp.data
+from gvp.data import ProteinGraphDataset
 
 
 three_to_one = {
@@ -73,7 +73,7 @@ def get_protein_feature(res_list):
         coords.append(res_coords)
     structure["coords"] = coords
     torch.set_num_threads(1)
-    dataset = gvp.data.ProteinGraphDataset([structure])
+    dataset = ProteinGraphDataset([structure])
     protein = dataset[0]
     return (
         protein.x,

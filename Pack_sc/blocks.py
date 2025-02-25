@@ -1,4 +1,3 @@
-
 import torch
 from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
@@ -6,15 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from sc_utils import gather_edges, gather_nodes, PositionalEncodings
-from data_utils import calc_bb_dihedrals
+
 
 # heterogeneous interaction layer
 class MPNNL(MessagePassing):
-    def __init__(self, in_channels: int,
-                 out_channels: int, 
-                 dropout,
-                 **kwargs):
-        kwargs.setdefault('aggr', 'add')
+    def __init__(self, in_channels: int, out_channels: int, dropout, **kwargs):
+        kwargs.setdefault("aggr", "add")
         super(MPNNL, self).__init__(**kwargs)
 
         self.in_channels = in_channels
@@ -24,17 +20,20 @@ class MPNNL(MessagePassing):
             nn.Linear(self.in_channels, self.out_channels),
             nn.Dropout(dropout),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(self.out_channels))
+            nn.BatchNorm1d(self.out_channels),
+        )
         self.mlp_node_ncov = nn.Sequential(
             nn.Linear(self.in_channels, self.out_channels),
             nn.Dropout(dropout),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(self.out_channels))
+            nn.BatchNorm1d(self.out_channels),
+        )
         self.edge_mlp = nn.Sequential(
             nn.Linear(6, out_channels),
             nn.Dropout(dropout),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(self.out_channels))
+            nn.BatchNorm1d(self.out_channels),
+        )
 
         self.mlp_coord_cov = nn.Sequential(nn.Linear(9, self.in_channels), nn.SiLU())
         self.mlp_coord_ncov = nn.Sequential(nn.Linear(9, self.in_channels), nn.SiLU())
@@ -42,28 +41,38 @@ class MPNNL(MessagePassing):
             nn.Linear(in_channels + out_channels, out_channels),
             nn.Dropout(dropout),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(self.out_channels))
+            nn.BatchNorm1d(self.out_channels),
+        )
         self.messageNN = nn.Sequential(
-            nn.Linear(in_channels*3, out_channels),
+            nn.Linear(in_channels * 3, out_channels),
             nn.Dropout(dropout),
             nn.LeakyReLU(),
-            nn.BatchNorm1d(self.out_channels))
+            nn.BatchNorm1d(self.out_channels),
+        )
 
-    def forward(self, x, edge_index, edge_features,
-                size=None):
+    def forward(self, x, edge_index, edge_features, size=None):
 
-        out_node_intra = self.propagate(edge_index=edge_index, x=x,edge_features=edge_features,messageNN=self.messageNN, updateNN=self.updateNN , size=size)#radial=radial_cov,
-        out_node = self.mlp_node_cov(x + out_node_intra)  
+        out_node_intra = self.propagate(
+            edge_index=edge_index,
+            x=x,
+            edge_features=edge_features,
+            messageNN=self.messageNN,
+            updateNN=self.updateNN,
+            size=size,
+        )  # radial=radial_cov,
+        out_node = self.mlp_node_cov(x + out_node_intra)
 
         return out_node
 
-    def message(self, x_j: Tensor, x_i: Tensor, messageNN, edge_features,
-                index: Tensor):
+    def message(
+        self, x_j: Tensor, x_i: Tensor, messageNN, edge_features, index: Tensor
+    ):
         edge_feat = self.edge_mlp(edge_features)
-        return messageNN(torch.cat([x_j, x_i,edge_feat], dim=-1)) 
+        return messageNN(torch.cat([x_j, x_i, edge_feat], dim=-1))
 
     def update(self, aggr_out: Tensor, x: Tensor, updateNN):
         return updateNN(torch.cat([aggr_out, x], dim=-1))
+
 
 class AttentionBlock(nn.Module):
     def __init__(self, hid_dim, num_heads, atten_active_fuc, dropout):
@@ -88,20 +97,31 @@ class AttentionBlock(nn.Module):
         B = query.shape[0]
 
         # Transform Q, K, V
-        q = self.f_q(query).view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3) # [B, num_heads, N_q, head_dim]
-        k = self.f_k(key).view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)  # [B, num_heads, N_k, head_dim]
+        q = (
+            self.f_q(query)
+            .view(B, -1, self.num_heads, self.head_dim)
+            .permute(0, 2, 1, 3)
+        )  # [B, num_heads, N_q, head_dim]
+        k = (
+            self.f_k(key).view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        )  # [B, num_heads, N_k, head_dim]
 
-        v = self.f_v(value).view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3) # [B, num_heads, N_k, head_dim]
-
+        v = (
+            self.f_v(value)
+            .view(B, -1, self.num_heads, self.head_dim)
+            .permute(0, 2, 1, 3)
+        )  # [B, num_heads, N_k, head_dim]
 
         # Calculate attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) / self.sqrt_dk  # [B, num_heads, N_q, N_k]
+        scores = (
+            torch.matmul(q, k.transpose(-2, -1)) / self.sqrt_dk
+        )  # [B, num_heads, N_q, N_k]
         if mask is not None:
             mask = mask.unsqueeze(1)
             # print(mask.shape)
             # print(scores.shape)
-            scores = scores.masked_fill(mask == 0, float('-inf'))
-       
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+
         # Apply softmax and dropout
         if self.atten_active_fuc == "softmax":
             attention_weights = F.softmax(scores, dim=-1)
@@ -112,10 +132,12 @@ class AttentionBlock(nn.Module):
         # Apply attention to the values
         weighted = torch.matmul(attention_weights, v)  # [B, num_heads, N_q, head_dim]
         # print(weighted.shape)
-        weighted = weighted.permute(0, 2, 1, 3).contiguous() # [B, N_q, num_heads, head_dim]
+        weighted = weighted.permute(
+            0, 2, 1, 3
+        ).contiguous()  # [B, N_q, num_heads, head_dim]
 
         # Concatenate heads and put through final linear layer
-        weighted = weighted.view(B, -1, self.hid_dim)   # [B, N_q, hid_dim]
+        weighted = weighted.view(B, -1, self.hid_dim)  # [B, N_q, hid_dim]
         output = self.fc_out(weighted)
 
         return output
@@ -124,8 +146,13 @@ class AttentionBlock(nn.Module):
 class CrossAttentionBlock(nn.Module):
     def __init__(self, hid_dim, dropout, atten_active_fuc, num_heads=4):
         super(CrossAttentionBlock, self).__init__()
-        self.att = AttentionBlock(hid_dim=hid_dim, num_heads=num_heads, atten_active_fuc=atten_active_fuc, dropout=dropout)
-        
+        self.att = AttentionBlock(
+            hid_dim=hid_dim,
+            num_heads=num_heads,
+            atten_active_fuc=atten_active_fuc,
+            dropout=dropout,
+        )
+
         self.linear_res = nn.Sequential(
             nn.Linear(hid_dim, hid_dim),
             nn.Dropout(dropout),
@@ -152,33 +179,48 @@ class CrossAttentionBlock(nn.Module):
         mask_aa_expanded = mask_aa.unsqueeze(1)  # [B, 1, N_aa]
 
         # 交叉注意力计算
-        aa_att = self.att(aa_features, ligand_features, ligand_features, mask=mask_l_expanded)
-        lig_att = self.att(ligand_features, aa_features, aa_features, mask=mask_aa_expanded)
+        aa_att = self.att(
+            aa_features, ligand_features, ligand_features, mask=mask_l_expanded
+        )
+        lig_att = self.att(
+            ligand_features, aa_features, aa_features, mask=mask_aa_expanded
+        )
         # 线性变换与残差连接
         aa_features = self.linear_res(aa_att) + aa_features
         # aa_features = aa_att + aa_features
         aa_features = self.norm_aa(aa_features)
-        
-        
-        ligand_features = self.linear_lig(lig_att)+ ligand_features #
+
+        ligand_features = self.linear_lig(lig_att) + ligand_features  #
         # ligand_features = lig_att + ligand_features
 
         ligand_features = self.norm_lig(ligand_features)
-    
-     
 
         return ligand_features, aa_features
 
+
 class InteractionBlock(nn.Module):
-    def __init__(self, hid_dim, num_heads, dropout, atten_active_fuc, crossAttention=True, interact_type="product"):
+    def __init__(
+        self,
+        hid_dim,
+        num_heads,
+        dropout,
+        atten_active_fuc,
+        crossAttention=True,
+        interact_type="product",
+    ):
         super(InteractionBlock, self).__init__()
         self.dropout = dropout
         self.hid_dim = hid_dim
         self.interact_type = interact_type
         self.crossAttention = crossAttention
         if self.crossAttention:
-            self.prot_lig_attention = CrossAttentionBlock(hid_dim=hid_dim, dropout=dropout, atten_active_fuc = atten_active_fuc, num_heads=num_heads)
-        
+            self.prot_lig_attention = CrossAttentionBlock(
+                hid_dim=hid_dim,
+                dropout=dropout,
+                atten_active_fuc=atten_active_fuc,
+                num_heads=num_heads,
+            )
+
         if self.interact_type == "product":
 
             self.mlp = nn.Sequential(
@@ -189,12 +231,11 @@ class InteractionBlock(nn.Module):
             )
         else:
             self.mlp = nn.Sequential(
-                nn.Linear(hid_dim*2, hid_dim),
+                nn.Linear(hid_dim * 2, hid_dim),
                 nn.BatchNorm1d(hid_dim),
                 nn.Dropout(dropout),
                 nn.LeakyReLU(),
             )
-        
 
         self.lig_trans_inteact = nn.Sequential(
             nn.Linear(hid_dim, hid_dim),
@@ -211,42 +252,44 @@ class InteractionBlock(nn.Module):
         )
 
     def forward(self, lig_features, aa_features, lig_mask=None, aa_mask=None):
-            # Apply transformations to ligand and amino acid features
-            if self.crossAttention:
-                lig_features, aa_features = self.prot_lig_attention(lig_features, aa_features, lig_mask, aa_mask)
-            
+        # Apply transformations to ligand and amino acid features
+        if self.crossAttention:
+            lig_features, aa_features = self.prot_lig_attention(
+                lig_features, aa_features, lig_mask, aa_mask
+            )
 
-            # print(aa_features.shape)
-            # Extend features for matrix multiplication
-            lig_features = lig_features.unsqueeze(2)  # [batch_size, N_l, 1, hidden]
-            # print('lig_features_exp',lig_features_exp.shape)
-            aa_features = aa_features.unsqueeze(1)  # [batch_size, 1, N_aa, hidden]
-            # print('aa_features_exp',aa_features_exp.shape)
-            if self.interact_type == "product":
-                lig_features = self.lig_trans_inteact(lig_features)
-                aa_features = self.aa_trans_inteact(aa_features)
-                interaction = torch.multiply(lig_features, aa_features) 
+        # print(aa_features.shape)
+        # Extend features for matrix multiplication
+        lig_features = lig_features.unsqueeze(2)  # [batch_size, N_l, 1, hidden]
+        # print('lig_features_exp',lig_features_exp.shape)
+        aa_features = aa_features.unsqueeze(1)  # [batch_size, 1, N_aa, hidden]
+        # print('aa_features_exp',aa_features_exp.shape)
+        if self.interact_type == "product":
+            lig_features = self.lig_trans_inteact(lig_features)
+            aa_features = self.aa_trans_inteact(aa_features)
+            interaction = torch.multiply(lig_features, aa_features)
 
-            else:
-                N_l =lig_features.size(1)
-                N_p =aa_features.size(2)
+        else:
+            N_l = lig_features.size(1)
+            N_p = aa_features.size(2)
 
-                lig_features = self.lig_trans_inteact(lig_features)
-                lig_features = lig_features.repeat(1,1,N_p,1)
-                # print('lig_features',lig_features.shape)
-                aa_features = self.aa_trans_inteact(aa_features)
-                aa_features = aa_features.repeat(1,N_l,1,1)
+            lig_features = self.lig_trans_inteact(lig_features)
+            lig_features = lig_features.repeat(1, 1, N_p, 1)
+            # print('lig_features',lig_features.shape)
+            aa_features = self.aa_trans_inteact(aa_features)
+            aa_features = aa_features.repeat(1, N_l, 1, 1)
 
-                interaction = torch.cat((lig_features, aa_features), dim=-1) # [batch_size, N_l, N_aa, 2*hidden]
+            interaction = torch.cat(
+                (lig_features, aa_features), dim=-1
+            )  # [batch_size, N_l, N_aa, 2*hidden]
 
-            if lig_mask is not None and aa_mask is not None:
-                lig_mask_exp = lig_mask.unsqueeze(2)  # [batch_size, N_l, 1]
-                aa_mask_exp = aa_mask.unsqueeze(1)  # [batch_size, 1, N_aa]
-                interaction_mask = lig_mask_exp & aa_mask_exp  # [batch_size, N_l, N_aa]
-            interaction = interaction[interaction_mask]
-            interaction = self.mlp(interaction)
-            return interaction, interaction_mask
-
+        if lig_mask is not None and aa_mask is not None:
+            lig_mask_exp = lig_mask.unsqueeze(2)  # [batch_size, N_l, 1]
+            aa_mask_exp = aa_mask.unsqueeze(1)  # [batch_size, 1, N_aa]
+            interaction_mask = lig_mask_exp & aa_mask_exp  # [batch_size, N_l, N_aa]
+        interaction = interaction[interaction_mask]
+        interaction = self.mlp(interaction)
+        return interaction, interaction_mask
 
 
 class ProteinFeatures(nn.Module):
@@ -294,7 +337,9 @@ class ProteinFeatures(nn.Module):
         self.positional_embeddings = PositionalEncodings(num_positional_embeddings)
 
         # Features for the encoder
-        enc_node_in = 21 + 128# + 1536 # alphabet for the sequence + dihedral angles + ESM embeddings
+        enc_node_in = (
+            21 + 128
+        )  # + 1536 # alphabet for the sequence + dihedral angles + ESM embeddings
         enc_edge_in = (
             num_positional_embeddings + num_rbf * 14 * 14
         )  # positional + distance features
@@ -344,7 +389,6 @@ class ProteinFeatures(nn.Module):
             D_adjust, np.minimum(self.top_k, X.shape[1]), dim=-1, largest=False
         )
         return D_neighbors, E_idx
-
 
     def _rbf(
         self,
@@ -399,13 +443,13 @@ class ProteinFeatures(nn.Module):
         # print(mask.shape)
         atom14_mask = features["atom14_mask"]
         # print(atom14_mask.shape)
-        X_m = atom14_mask*mask[:, :, None]  # [B,L,14]*[B,L,1] -> [B,L,14]
+        X_m = atom14_mask * mask[:, :, None]  # [B,L,14]*[B,L,1] -> [B,L,14]
         # print(X_m.shape)
         R_idx = features["R_idx"]
         chain_labels = features["chain_labels"]
         protein_mpnn_feat = features["protein_mpnn_feat"]
         # esm_feat = features["esm_feat"]
-        
+
         if self.training and self.augment_eps > 0:
             X = X + self.augment_eps * torch.randn_like(X)
 
@@ -421,7 +465,7 @@ class ProteinFeatures(nn.Module):
 
         _, E_idx = self._dist(Ca, mask)
 
-        X_m_gathered = gather_nodes(X_m, E_idx) 
+        X_m_gathered = gather_nodes(X_m, E_idx)
 
         backbone_coords_list = [N, Ca, C, O, Cb]
         backbone_coords_list = [N, Ca, C, O]
@@ -438,27 +482,28 @@ class ProteinFeatures(nn.Module):
         RBF_all = []
         for atom_1 in range(14):
             for atom_2 in range(14):
-                rbf_features=self._get_rbf(
-                all_coords_list[:, :, atom_1, :],
-                all_coords_list[:, :, atom_2, :],
-                E_idx,
-                D_mu_shape=[1, 1, 1, -1],
-                lower_bound=self.lower_bound,
-                upper_bound=self.upper_bound,
-                num_bins=self.num_rbf,
+                rbf_features = self._get_rbf(
+                    all_coords_list[:, :, atom_1, :],
+                    all_coords_list[:, :, atom_2, :],
+                    E_idx,
+                    D_mu_shape=[1, 1, 1, -1],
+                    lower_bound=self.lower_bound,
+                    upper_bound=self.upper_bound,
+                    num_bins=self.num_rbf,
                 )
 
                 rbf_features = (
-                rbf_features
-                * X_m[:, :, atom_1, None, None]
-                * X_m_gathered[:, :, :, atom_2, None]
+                    rbf_features
+                    * X_m[:, :, atom_1, None, None]
+                    * X_m_gathered[:, :, :, atom_2, None]
                 )
                 RBF_all.append(rbf_features)
-                
 
-        RBF_all = torch.cat(tuple(RBF_all), dim=-1)  # [B, L,30, n_atoms * n_atoms * num_rbf]
+        RBF_all = torch.cat(
+            tuple(RBF_all), dim=-1
+        )  # [B, L,30, n_atoms * n_atoms * num_rbf]
         # print(RBF_all.shape)
-        offset = R_idx[:, :, None] - R_idx[:, None, :] #  [B, L] -
+        offset = R_idx[:, :, None] - R_idx[:, None, :]  #  [B, L] -
         offset = gather_edges(offset[:, :, :, None], E_idx)[:, :, :, 0]  # [B, L, K]
 
         d_chains = (
@@ -470,15 +515,13 @@ class ProteinFeatures(nn.Module):
         # print(E.shape)
         E = self.enc_edge_embedding(E)
         E = self.enc_norm_edges(E)
-        
 
         V = torch.nn.functional.one_hot(S, 21).float()
         # print(V.shape)
-        V = torch.cat([V, protein_mpnn_feat], dim=-1)#, esm_feat
+        V = torch.cat([V, protein_mpnn_feat], dim=-1)  # , esm_feat
         # print(V.shape)
         V = self.enc_node_embedding(V)
         V = self.enc_norm_nodes(V)
-
 
         return V, E, E_idx, X
 
@@ -563,52 +606,56 @@ class ProteinFeatures(nn.Module):
         F = self.dec_edge_embedding1(F)
         F = self.dec_norm_edges1(F)
         return V, F
+
+
 def get_act_fxn(act: str):
-    if act == 'relu':
+    if act == "relu":
         return F.relu
-    elif act == 'gelu':
+    elif act == "gelu":
         return F.gelu
-    elif act == 'elu':
+    elif act == "elu":
         return F.elu
-    elif act == 'selu':
+    elif act == "selu":
         return F.selu
-    elif act == 'celu':
+    elif act == "celu":
         return F.celu
-    elif act == 'leaky_relu':
+    elif act == "leaky_relu":
         return F.leaky_relu
-    elif act == 'prelu':
+    elif act == "prelu":
         return F.prelu
-    elif act == 'silu':
+    elif act == "silu":
         return F.silu
-    elif act == 'sigmoid':
+    elif act == "sigmoid":
         return nn.Sigmoid()
 
+
 class MLP(nn.Module):
-    def __init__(self, num_in, num_inter, num_out, num_layers, act='relu', bias=True):
+    def __init__(self, num_in, num_inter, num_out, num_layers, act="relu", bias=True):
         super().__init__()
-        
+
         # Linear layers for MLP
         self.W_in = nn.Linear(num_in, num_inter, bias=bias)
-        self.W_inter = nn.ModuleList([nn.Linear(num_inter, num_inter, bias=bias) for _ in range(num_layers - 2)])
+        self.W_inter = nn.ModuleList(
+            [nn.Linear(num_inter, num_inter, bias=bias) for _ in range(num_layers - 2)]
+        )
         self.W_out = nn.Linear(num_inter, num_out, bias=bias)
-        
+
         # Activation function
         self.act = get_act_fxn(act)
-        
+
     def forward(self, X):
-        
+
         # Embed inputs with input layer
         X = self.act(self.W_in(X))
-        
+
         # Pass through intermediate layers
         for layer in self.W_inter:
             X = self.act(layer(X))
-            
+
         # Get output from output layer
         X = self.W_out(X)
-        
-        return X
 
+        return X
 
 
 if __name__ == "__main__":
@@ -650,8 +697,6 @@ if __name__ == "__main__":
     }
     V, E, E_idx = model.features_encode(features)
     print(V.shape, E.shape, E_idx.shape)
-
-
 
 
 # %%
