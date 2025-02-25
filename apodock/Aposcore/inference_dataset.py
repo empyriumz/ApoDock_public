@@ -10,7 +10,11 @@ from torch_geometric.data.batch import Batch
 from torch_scatter import scatter_add
 from Bio.PDB import PDBParser
 from apodock.Aposcore.dataset_Aposcore import mol2graph, get_pro_coord
-from apodock.Aposcore.utils import get_clean_res_list, get_protein_feature, load_model_dict
+from apodock.Aposcore.utils import (
+    get_clean_res_list,
+    get_protein_feature,
+    load_model_dict,
+)
 
 
 def read_sdf_file(mol_file, save_mols=False):

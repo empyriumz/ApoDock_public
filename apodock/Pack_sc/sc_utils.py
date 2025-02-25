@@ -11,7 +11,10 @@ from apodock.Pack_sc.model_utils import (
     gather_nodes,
 )
 
-from apodock.Pack_sc.openfold.data.data_transforms import atom37_to_torsion_angles, make_atom14_masks
+from apodock.Pack_sc.openfold.data.data_transforms import (
+    atom37_to_torsion_angles,
+    make_atom14_masks,
+)
 from apodock.Pack_sc.openfold.np.residue_constants import (
     restype_atom14_mask,
     restype_atom14_rigid_group_positions,

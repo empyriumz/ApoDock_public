@@ -1,0 +1,51 @@
+# ApoDock Configuration File
+# This file contains all settings for the ApoDock pipeline
+
+# General pipeline settings
+output_dir: ./docking_results
+use_packing: true
+top_k: 40
+pocket_distance: 10.0
+
+# Input file settings
+input:
+  # Input file paths for a single docking run
+  protein_file: ./demo/1a0q/1a0q_protein.pdb  # Path to the protein file (required)
+  ligand_file: ./demo/1a0q/1a0q_ligand.sdf   # Path to the ligand file (required)
+  ref_lig_file: ./demo/1a0q/1a0q_ligand.sdf  # Path to the reference ligand file (optional, for defining the binding site)
+
+# Pack model settings
+pack:
+  checkpoint_path: ./checkpoints/ApoPack_time_split_0.pt
+  device: cuda
+  packs_per_design: 40
+  packing_batch_size: 16
+  temperature: 2.0
+  num_clusters: 6
+  ligandmpnn_path: ./checkpoints/proteinmpnn_v_48_020.pt
+
+# Aposcore model settings
+aposcore:
+  checkpoint_path: ./checkpoints/ApoScore_time_split_0.pt
+  device: cuda
+  hidden_dim: 256
+  num_heads: 4
+  dropout: 0.1
+  cross_attention: true
+  attention_activation: softmax
+  num_layers: 6
+  interaction_type: product
+  n_gaussians: 10
+
+# Docking engine settings
+docking:
+  # Options: 'gnina' or 'smina.static'
+  program: gnina
+  num_modes: 40
+  exhaustiveness: 32
+  autobox_add: 6.0
+  # Example box center: [0.0, 0.0, 0.0]
+  box_center: null
+  # Example box size: [20.0, 20.0, 20.0]
+  box_size: null
+  gnina_path: /host/gnina 
