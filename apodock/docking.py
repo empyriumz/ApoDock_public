@@ -2,18 +2,13 @@ import os
 import sys
 import argparse
 import subprocess
-
-sys.path.append("Pack_sc")
-sys.path.append("Aposcore")
-from Pack_sc.inference import sc_pack
-from Pack_sc.Packnn import Pack
-from Aposcore.inference_dataset import get_mdn_score, read_sdf_file
-from Aposcore.Aposcore import Aposcore
 import numpy as np
 from rdkit import Chem
-import argparse
 import pandas as pd
-
+from apodock.Pack_sc.inference import sc_pack
+from apodock.Pack_sc.Packnn import Pack
+from apodock.Aposcore.inference_dataset import get_mdn_score, read_sdf_file
+from apodock.Aposcore.Aposcore import Aposcore
 
 def rank_docking_results(
     docked_sdfs, mdn_scores, top_k=10, packing=True, docking_program="smina"

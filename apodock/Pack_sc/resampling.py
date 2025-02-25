@@ -2,9 +2,9 @@ from typing import Dict
 import torch
 import torch.nn.functional as F
 
-from openfold.np import residue_constants as rc
-from data_utils import calc_sc_dihedrals, get_atom14_coords_infer
-from data_utils import _get_chi_atom_indices_and_mask
+from apodock.Pack_sc.openfold.np import residue_constants as rc
+from apodock.Pack_sc.data_utils import calc_sc_dihedrals, get_atom14_coords_infer
+from apodock.Pack_sc.data_utils import _get_chi_atom_indices_and_mask
 
 chi_atom_indices_atom14, chi_mask_atom14 = _get_chi_atom_indices_and_mask(
     use_atom14=True

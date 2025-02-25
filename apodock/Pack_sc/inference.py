@@ -5,8 +5,8 @@ from torch_geometric.data import Data, Batch
 from rdkit import Chem
 from Bio.PDB import PDBParser, Superimposer
 from torch_geometric.utils import to_dense_batch
-from resampling import resample_loop
-from data_utils import (
+from apodock.Pack_sc.resampling import resample_loop
+from apodock.Pack_sc.data_utils import (
     parse_PDB,
     get_clean_res_list,
     featurize,
@@ -14,14 +14,14 @@ from data_utils import (
     get_atom14_coords,
     write_full_PDB,
 )
-from sc_utils import make_torsion_features
-from dataset_pack import (
+from apodock.Pack_sc.sc_utils import make_torsion_features
+from apodock.Pack_sc.dataset_pack import (
     mol2graph,
     res2pdb,
     get_protein_mpnn_encoder_features,
     Pocket_BB_D,
 )
-from openfold.data.data_transforms import make_atom14_masks
+from apodock.Pack_sc.openfold.data.data_transforms import make_atom14_masks
 from torch.utils.data import Dataset, DataLoader
 from sklearn_extra.cluster import KMedoids
 

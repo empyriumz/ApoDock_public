@@ -6,10 +6,24 @@ import torch.utils
 import prody
 from prody import confProDy, writePDB, parsePDB
 from torch.nn import functional as F
-import openfold.np.residue_constants as rc
+import apodock.Pack_sc.openfold.np.residue_constants as rc
 
 confProDy(verbosity="none")
 from typing import Optional, Union, Tuple
+
+
+
+from apodock.Pack_sc.openfold.utils.rigid_utils import Rigid
+from apodock.Pack_sc.openfold.utils import feats
+from apodock.Pack_sc.openfold.data.data_transforms import atom37_to_torsion_angles
+from apodock.Pack_sc.openfold.np.residue_constants import (
+    restype_atom14_mask,
+    restype_atom14_rigid_group_positions,
+    restype_atom14_to_rigid_group,
+    restype_rigid_group_default_frame,
+)
+from apodock.Pack_sc.sc_utils import map_mpnn_to_af2_seq
+
 
 
 restype_1to3 = {
@@ -1070,19 +1084,6 @@ def get_clean_res_list(
             if verbose:
                 print(res, res.full_id, "is hetero")
     return clean_res_list
-
-
-from openfold.utils.rigid_utils import Rigid
-from openfold.utils import feats
-from openfold.data.data_transforms import atom37_to_torsion_angles
-from openfold.np.residue_constants import (
-    restype_atom14_mask,
-    restype_atom14_rigid_group_positions,
-    restype_atom14_to_rigid_group,
-    restype_rigid_group_default_frame,
-)
-from sc_utils import map_mpnn_to_af2_seq
-
 
 def get_atom14_coords(X_37, S, atom14_mask, atom37_mask, chi_pred, device):
 

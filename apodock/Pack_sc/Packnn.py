@@ -4,20 +4,20 @@ import torch.nn.functional as F
 from torch.nn import Linear
 from torch_geometric.utils import to_dense_batch
 from torch.utils.checkpoint import checkpoint
-
-from blocks import (
+from typing import Dict, Union, Optional
+from apodock.Pack_sc.blocks import (
     MPNNL,
     ProteinFeatures,
     MLP,
     CrossAttentionBlock,
 )
-from model_utils import (
+from apodock.Pack_sc.model_utils import (
     EncLayer,
     gather_nodes,
 )
-from openfold.data.data_transforms import make_atom14_masks
-import openfold.np.residue_constants as rc
-from data_utils import (
+from apodock.Pack_sc.openfold.data.data_transforms import make_atom14_masks
+import apodock.Pack_sc.openfold.np.residue_constants as rc
+from apodock.Pack_sc.data_utils import (
     get_atom14_coords,
     chi_angle_to_bin,
     nll_chi_loss,
@@ -26,7 +26,6 @@ from data_utils import (
     BlackHole,
     rotamer_recovery_from_coords,
 )
-from typing import Dict, Union, Optional
 
 
 class Pack(nn.Module):

@@ -4,14 +4,14 @@ import networkx as nx
 import torch
 from rdkit import Chem
 from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain
-from data_utils import (
+from apodock.Pack_sc.data_utils import (
     parse_PDB,
     featurize,
     calc_bb_dihedrals,
 )
 
 multiprocessing.set_start_method("spawn", force=True)
-from model_utils import ProteinMPNN
+from apodock.Pack_sc.model_utils import ProteinMPNN
 
 
 def one_of_k_encoding(k, possible_values):

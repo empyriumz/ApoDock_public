@@ -1,5 +1,5 @@
 import torch
-from gvp.data import ProteinGraphDataset
+from apodock.Aposcore.gvp.data import ProteinGraphDataset
 
 
 three_to_one = {

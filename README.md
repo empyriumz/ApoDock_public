@@ -22,13 +22,6 @@ conda env create -f environment.yaml
 conda activate apodock
 
 ```
-Then install gvp-gnn:
-```
-cd ApoDock_public
-git clone https://github.com/drorlab/gvp-pytorch.git
-cd gvp-pytorch
-pip install -e .
-```
 
 ## Quick start
 

@@ -1,16 +1,16 @@
 import os
+import sys
 import numpy as np
-from itertools import repeat
 import torch
+from itertools import repeat
 from torch.utils.data import Dataset, DataLoader
 from rdkit import Chem
 from torch_geometric.data import Data
 from torch_geometric.data.batch import Batch
-import sys
-from dataset_Aposcore import mol2graph, get_pro_coord
-from Bio.PDB import PDBParser
-from utils import get_clean_res_list, get_protein_feature, load_model_dict
 from torch_scatter import scatter_add
+from Bio.PDB import PDBParser
+from apodock.Aposcore.dataset_Aposcore import mol2graph, get_pro_coord
+from apodock.Aposcore.utils import get_clean_res_list, get_protein_feature, load_model_dict
 
 
 def read_sdf_file(mol_file, save_mols=False):

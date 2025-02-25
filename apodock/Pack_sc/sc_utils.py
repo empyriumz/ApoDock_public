@@ -1,10 +1,7 @@
 import numpy as np
 import torch
-import torch.distributions as D
 import torch.nn as nn
-
-
-from model_utils import (
+from apodock.Pack_sc.model_utils import (
     DecLayer,
     DecLayerJ,
     EncLayer,
@@ -14,15 +11,15 @@ from model_utils import (
     gather_nodes,
 )
 
-from openfold.data.data_transforms import atom37_to_torsion_angles, make_atom14_masks
-from openfold.np.residue_constants import (
+from apodock.Pack_sc.openfold.data.data_transforms import atom37_to_torsion_angles, make_atom14_masks
+from apodock.Pack_sc.openfold.np.residue_constants import (
     restype_atom14_mask,
     restype_atom14_rigid_group_positions,
     restype_atom14_to_rigid_group,
     restype_rigid_group_default_frame,
 )
-from openfold.utils import feats
-from openfold.utils.rigid_utils import Rigid
+from apodock.Pack_sc.openfold.utils import feats
+from apodock.Pack_sc.openfold.utils.rigid_utils import Rigid
 
 torch_pi = torch.tensor(np.pi, device="cpu")
 

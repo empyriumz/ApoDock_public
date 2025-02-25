@@ -14,9 +14,9 @@
 # limitations under the License.
 import torch
 import torch.nn as nn
-import openfold.np.residue_constants as rc
-from openfold.utils.rigid_utils import Rotation, Rigid
-from openfold.utils.tensor_utils import batched_gather
+import apodock.Pack_sc.openfold.np.residue_constants as rc
+from apodock.Pack_sc.openfold.utils.rigid_utils import Rotation, Rigid
+from apodock.Pack_sc.openfold.utils.tensor_utils import batched_gather
 
 
 def pseudo_beta_fn(aatype, all_atom_positions, all_atom_masks):

@@ -4,7 +4,7 @@ import torch
 from rdkit import Chem
 from rdkit import RDLogger
 from rdkit import Chem
-from common.residue_constants import atom_order
+from apodock.Aposcore.common.residue_constants import atom_order
 import warnings
 from threading import Lock
 

@@ -3,7 +3,7 @@ from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
 import torch.nn as nn
 import torch.nn.functional as F
-from gvp.model import GVP, GVPConvLayer, LayerNorm
+from apodock.Aposcore.gvp.model import GVP, GVPConvLayer, LayerNorm
 
 
 # heterogeneous interaction layer

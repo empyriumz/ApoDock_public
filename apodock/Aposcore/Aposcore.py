@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import Linear
-from HIL import GVP_embedding, InteractionBlock, MPNNL
+from apodock.Aposcore.HIL import GVP_embedding, InteractionBlock, MPNNL
 from torch_geometric.utils import to_dense_batch
 
 

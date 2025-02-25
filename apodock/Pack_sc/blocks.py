@@ -4,7 +4,7 @@ from torch_geometric.nn.conv import MessagePassing
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from sc_utils import gather_edges, gather_nodes, PositionalEncodings
+from apodock.Pack_sc.sc_utils import gather_edges, gather_nodes, PositionalEncodings
 
 
 # heterogeneous interaction layer
