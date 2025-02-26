@@ -13,8 +13,27 @@ from apodock.Aposcore.dataset_Aposcore import mol2graph, get_pro_coord
 from apodock.Aposcore.utils import (
     get_clean_res_list,
     get_protein_feature,
-    load_model_dict,
 )
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class ScoringConfig:
+    """Configuration for protein-ligand scoring.
+
+    This class centralizes all parameters needed for the scoring process,
+    making it easier to manage and pass around parameters.
+    """
+
+    batch_size: int = 64
+    dis_threshold: float = 5.0
+    output_dir: Optional[str] = None
+
+    def __post_init__(self):
+        """Initialize default values and validate configuration."""
+        if self.output_dir is not None and not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir, exist_ok=True)
 
 
 def read_sdf_file(mol_file, save_mols=False):
@@ -167,31 +186,135 @@ class Dataset_infer(Dataset):
 
 
 def val(model, dataloader, device, dis_threshold=5.0):
-    """Validation function for the model"""
-    model.eval()
+    """
+    Validation function for calculating probabilities from the MDN model.
+
+    Args:
+        model: The Aposcore model in evaluation mode
+        dataloader: DataLoader containing the data to evaluate
+        device: Device to run inference on ('cpu', 'cuda', etc.)
+        dis_threshold: Distance threshold for filtering interactions (default: 5.0)
+
+    Returns:
+        numpy.ndarray: Array of probabilities for each input
+
+    Raises:
+        RuntimeError: If no valid predictions could be generated
+    """
+    model.eval()  # Ensure model is in evaluation mode
     probs = []
-    for data in dataloader:
-        with torch.no_grad():
-            data["ligand_features"] = data["ligand_features"].to(device)
-            data["protein_features"] = data["protein_features"].to(device)
+    total_batches = len(dataloader)
 
-            pi, sigma, mu, dist, batch = model(data)
-            prob = model.calculate_probablity(pi, sigma, mu, dist)
-            prob[torch.where(dist > dis_threshold)[0]] = 0.0
+    print(f"Starting evaluation of {total_batches} batches...")
 
-            batch = batch.to(device)
-            probx = scatter_add(prob, batch, dim=0, dim_size=batch.unique().size(0))
-            probs.append(probx.cpu().numpy())
+    for batch_idx, data in enumerate(dataloader):
+        try:
+            with torch.no_grad():
+                # Move data to device
+                data["ligand_features"] = data["ligand_features"].to(device)
+                data["protein_features"] = data["protein_features"].to(device)
 
+                # Get model predictions
+                pi, sigma, mu, dist, batch = model(data)
+
+                # Calculate probabilities
+                prob = model.calculate_probablity(pi, sigma, mu, dist)
+
+                # Apply distance threshold
+                prob[torch.where(dist > dis_threshold)[0]] = 0.0
+
+                # Aggregate probabilities by batch
+                batch = batch.to(device)
+                probx = scatter_add(prob, batch, dim=0, dim_size=batch.unique().size(0))
+                probs.append(probx.cpu().numpy())
+
+                # Print progress for every 10% of batches
+                if batch_idx % max(1, total_batches // 10) == 0:
+                    print(
+                        f"Processed {batch_idx}/{total_batches} batches ({batch_idx/total_batches*100:.1f}%)"
+                    )
+
+        except Exception as e:
+            print(f"Error processing batch {batch_idx}: {str(e)}")
+            continue
+
+    if not probs:
+        raise RuntimeError("No valid predictions generated")
+
+    # Concatenate all batch results
+    print("Finalizing predictions...")
     pred = np.concatenate(probs)
+    print(f"Evaluation complete. Generated {len(pred)} predictions.")
     return pred
 
 
-def get_mdn_score(sdf_files, pocket_files, model, ckpt, device, dis_threshold=5.0):
-    """Get MDN scores for docked poses"""
-    load_model_dict(model, ckpt)
-    model = model.to(device)
-    toy_set = Dataset_infer(sdf_files, pocket_files)
-    toy_loader = PLIDataLoader(toy_set, batch_size=64, shuffle=False)
-    pred = val(model, toy_loader, device, dis_threshold)
-    return pred
+def load_model_for_inference(model, checkpoint_path, device):
+    from apodock.utils import ModelManager
+
+    return ModelManager.load_model(model, checkpoint_path, device)
+
+
+def get_mdn_score(
+    sdf_files,
+    pocket_files,
+    model,
+    checkpoint_path,
+    device,
+    output_dir=None,
+    config=None,
+):
+    """
+    Calculate Mixture Density Network (MDN) scores for docked poses.
+
+    Args:
+        sdf_files: List of SDF file paths containing docked poses
+        pocket_files: List of protein pocket file paths
+        model: The Aposcore model object
+        checkpoint_path: Path to the model checkpoint file
+        device: Device to run inference on ('cpu', 'cuda', etc.)
+        output_dir: Output directory for saving results (default: None)
+        config: ScoringConfig object with scoring parameters (default: None)
+
+    Returns:
+        numpy.ndarray: Array of MDN scores for the docked poses
+
+    Raises:
+        ValueError: If input validation fails
+        RuntimeError: If score calculation fails
+    """
+    # Import ModelManager here to avoid circular imports
+    from apodock.utils import ModelManager
+
+    # Use default configuration if none provided
+    if config is None:
+        config = ScoringConfig(output_dir=output_dir)
+
+    # Validate inputs
+    if not sdf_files or not pocket_files:
+        raise ValueError("Empty input files list provided")
+
+    if len(sdf_files) != len(pocket_files):
+        raise ValueError(
+            f"Number of SDF files ({len(sdf_files)}) must match number of pocket files ({len(pocket_files)})"
+        )
+
+    try:
+        # Load model for inference
+        model = load_model_for_inference(model, checkpoint_path, device)
+
+        # Create dataset and dataloader
+        dataset = Dataset_infer(sdf_files, pocket_files)
+        dataloader = PLIDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+
+        # Calculate scores
+        scores = val(model, dataloader, device, config.dis_threshold)
+
+        # Clean up GPU memory
+        ModelManager.cleanup_gpu_memory(device)
+
+        return scores
+    except Exception as e:
+        # Clean up GPU memory in case of error
+        ModelManager.cleanup_gpu_memory(device)
+        # Catch and re-raise with more context
+        raise RuntimeError(f"Failed to calculate MDN scores: {str(e)}") from e

@@ -2,12 +2,17 @@ import os
 import subprocess
 from typing import List, Optional
 from rdkit import Chem
+import numpy as np
 
 from apodock.config import PipelineConfig, DockingEngineConfig
 from apodock.utils import ensure_dir, ApoDockError, logger
 from apodock.Pack_sc.inference import sc_pack
 from apodock.Pack_sc.Packnn import Pack
-from apodock.Aposcore.inference_dataset import get_mdn_score, read_sdf_file
+from apodock.Aposcore.inference_dataset import (
+    get_mdn_score,
+    read_sdf_file,
+    ScoringConfig,
+)
 from apodock.Aposcore.Aposcore import Aposcore
 
 
@@ -94,6 +99,21 @@ class DockingEngine:
         self.program = config.program
         self.gnina_path = config.gnina_path
 
+        # Log whether box center and size are defined in the config
+        if config.box_center:
+            logger.info(f"Using box center from config: {config.box_center}")
+        else:
+            logger.info(
+                "Box center not defined in config, will use reference ligand for box definition"
+            )
+
+        if config.box_size:
+            logger.info(f"Using box size from config: {config.box_size}")
+        else:
+            logger.info(
+                "Box size not defined in config, will use reference ligand for box definition"
+            )
+
     def dock(
         self,
         ligand: str,
@@ -168,6 +188,145 @@ class DockingEngine:
             logger.error(f"Docking failed: {str(e)}")
             raise ApoDockError(f"Docking failed: {str(e)}")
 
+    def dock_to_packed_proteins(
+        self,
+        ligand_list: List[str],
+        cluster_packs_list: List[List[str]],
+        ref_lig_list: List[str],
+        out_dir: str,
+    ) -> tuple:
+        """
+        Dock a list of ligands to their corresponding packed protein structures.
+
+        Args:
+            ligand_list: List of paths to ligand files
+            cluster_packs_list: List of lists of packed protein structures
+            ref_lig_list: List of paths to reference ligand files
+            out_dir: Output directory for docking results
+
+        Returns:
+            Tuple containing:
+                - List of paths to the docked pose files
+                - List of paths to the corresponding packed protein structures used for each pose
+        """
+        docked_poses = []
+        corresponding_packed_proteins = (
+            []
+        )  # Track which packed protein was used for each pose
+
+        for i, ligand in enumerate(ligand_list):
+            # Get the reference ligand for this ligand/protein pair
+            ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
+
+            ligand_poses = []
+            ligand_proteins = []  # Store packed proteins used for this ligand
+            # Dock the ligand to each packed protein in the corresponding cluster
+            for packed_protein in cluster_packs_list[i]:
+                try:
+                    # Use the original reference ligand from ref_lig_list instead of searching in the directory
+                    # If no reference ligand provided, try to find one in the protein directory as fallback
+                    if ref_lig is None or not os.path.exists(ref_lig):
+                        # Fallback to searching in the protein directory
+                        protein_dir = os.path.dirname(packed_protein)
+                        ref_lig_candidates = [
+                            f
+                            for f in os.listdir(protein_dir)
+                            if f.endswith(".mol2") or f.endswith(".sdf")
+                        ]
+
+                        local_ref_lig = None
+                        if ref_lig_candidates:
+                            local_ref_lig = os.path.join(
+                                protein_dir, ref_lig_candidates[0]
+                            )
+                            logger.info(
+                                f"Found local reference ligand: {local_ref_lig}"
+                            )
+                    else:
+                        local_ref_lig = ref_lig
+                        logger.info(f"Using provided reference ligand: {local_ref_lig}")
+
+                    # Dock using the packed protein
+                    docked_pose = self.dock(
+                        ligand=ligand,
+                        protein=packed_protein,
+                        ref_lig=local_ref_lig,
+                        out_dir=out_dir,
+                        use_packing=True,
+                    )
+                    ligand_poses.append(docked_pose)
+                    ligand_proteins.append(
+                        packed_protein
+                    )  # Store the packed protein used
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to dock {ligand} to {packed_protein}: {str(e)}"
+                    )
+
+            if ligand_poses:
+                docked_poses.extend(ligand_poses)
+                corresponding_packed_proteins.extend(ligand_proteins)
+            else:
+                logger.error(f"No successful docking for ligand {ligand}")
+
+        return docked_poses, corresponding_packed_proteins
+
+    def dock_to_pockets(
+        self,
+        ligand_list: List[str],
+        pocket_list: List[str],
+        ref_lig_list: List[str],
+        out_dir: str,
+    ) -> List[str]:
+        """
+        Dock a list of ligands to their corresponding protein pockets.
+
+        Args:
+            ligand_list: List of paths to ligand files
+            pocket_list: List of paths to protein pocket files
+            ref_lig_list: List of paths to reference ligand files
+            out_dir: Output directory for docking results
+
+        Returns:
+            List of paths to the docked pose files
+        """
+        docked_poses = []
+
+        for i, (ligand, pocket) in enumerate(zip(ligand_list, pocket_list)):
+            try:
+                # Use the original reference ligand if available
+                ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
+
+                # If no reference ligand provided or it doesn't exist, look in the pocket directory as fallback
+                if ref_lig is None or not os.path.exists(ref_lig):
+                    # Fallback to searching in the pocket directory
+                    pocket_dir = os.path.dirname(pocket)
+                    ref_lig_candidates = [
+                        f
+                        for f in os.listdir(pocket_dir)
+                        if f.endswith(".mol2") or f.endswith(".sdf")
+                    ]
+
+                    if ref_lig_candidates:
+                        ref_lig = os.path.join(pocket_dir, ref_lig_candidates[0])
+                        logger.info(f"Found local reference ligand: {ref_lig}")
+                else:
+                    logger.info(f"Using provided reference ligand: {ref_lig}")
+
+                # Dock the ligand to the pocket
+                docked_pose = self.dock(
+                    ligand=ligand,
+                    protein=pocket,
+                    ref_lig=ref_lig,
+                    out_dir=out_dir,
+                    use_packing=False,
+                )
+                docked_poses.append(docked_pose)
+            except Exception as e:
+                logger.error(f"Failed to dock {ligand} to {pocket}: {str(e)}")
+
+        return docked_poses
+
 
 class ResultsProcessor:
     """Process and rank docking results."""
@@ -220,11 +379,33 @@ class ResultsProcessor:
             return None
 
         # Check that counts match
-        if not (len(mol_list) == len(mol_name_list) == len(scores)):
+        if len(mol_list) != len(mol_name_list):
             logger.error(
-                f"Mismatched counts: {len(mol_list)} molecules, {len(mol_name_list)} names, {len(scores)} scores"
+                f"Mismatched molecule and name counts: {len(mol_list)} molecules, {len(mol_name_list)} names"
             )
             return None
+
+        # Handle potential score count mismatch
+        if len(mol_list) != len(scores):
+            logger.warning(
+                f"Mismatched molecule and score counts: {len(mol_list)} molecules, {len(scores)} scores"
+            )
+
+            # Adjust scores list if needed
+            if len(scores) > len(mol_list):
+                # If we have more scores than molecules, truncate the scores list
+                logger.warning(
+                    f"Truncating scores list from {len(scores)} to {len(mol_list)}"
+                )
+                scores = scores[: len(mol_list)]
+            else:
+                # If we have fewer scores than molecules, we'll duplicate the last score
+                # This is a fallback approach to allow processing to continue
+                logger.warning(
+                    f"Extending scores list from {len(scores)} to {len(mol_list)} by duplicating last score"
+                )
+                last_score = scores[-1] if scores else 0.0
+                scores.extend([last_score] * (len(mol_list) - len(scores)))
 
         # Sort molecules by scores
         sorted_pairs = sorted(
@@ -256,6 +437,144 @@ class ResultsProcessor:
         logger.info(f"Wrote top {self.top_k} poses to {top_k_sdf}")
         return top_k_sdf
 
+    def process(self, scored_poses: List[tuple], output_dir: str) -> List[str]:
+        """
+        Process scored poses and rank them.
+
+        Args:
+            scored_poses: List of tuples containing (docked_sdf_path, scores) or directly an array of scores
+            output_dir: Output directory for processed results
+
+        Returns:
+            List of paths to the ranked pose files
+        """
+        result_files = []
+
+        # Handle direct scores array from get_mdn_score
+        if isinstance(scored_poses, np.ndarray):
+            logger.warning(
+                "Received raw scores array without file paths, cannot process results"
+            )
+            return result_files
+
+        # Check if we have paired data (docked_sdf, scores) or just a list of files followed by separate scores
+        if all(isinstance(item, tuple) and len(item) == 2 for item in scored_poses):
+            # We have paired data - extract files and scores separately
+            docked_sdfs = [item[0] for item in scored_poses]
+            all_scores = []
+            for _, score in scored_poses:
+                if isinstance(score, (list, np.ndarray)):
+                    all_scores.extend(
+                        score if isinstance(score, list) else score.tolist()
+                    )
+                else:
+                    all_scores.append(score)
+
+            # Group the SDF files by directory (to handle different ligand/protein pairs)
+            grouped_sdfs = {}
+            for sdf_file in docked_sdfs:
+                dir_key = os.path.dirname(sdf_file)
+                if dir_key not in grouped_sdfs:
+                    grouped_sdfs[dir_key] = []
+                grouped_sdfs[dir_key].append(sdf_file)
+
+            # Process each group
+            for dir_key, sdf_files in grouped_sdfs.items():
+                # Determine if packing was used based on file name pattern
+                use_packing = any(
+                    "Packed" in os.path.basename(f) or "_pack_" in os.path.basename(f)
+                    for f in sdf_files
+                )
+
+                # Get the docking program name from the file path
+                docking_program = "smina"  # Default
+                for f in sdf_files:
+                    if "gnina" in f:
+                        docking_program = "gnina"
+                        break
+
+                # Count total molecules to calculate how many scores we need
+                total_mols = 0
+                mol_counts = []
+                for sdf in sdf_files:
+                    mols, _ = read_sdf_file(sdf, save_mols=True)
+                    if mols is None:
+                        mol_counts.append(0)
+                        continue
+                    mol_counts.append(len(mols))
+                    total_mols += len(mols)
+
+                # If total molecules doesn't match available scores, log warning and continue
+                if total_mols > len(all_scores):
+                    logger.warning(
+                        f"Not enough scores ({len(all_scores)}) for all molecules ({total_mols})"
+                    )
+                    continue
+
+                # Take the appropriate number of scores for this group's molecules
+                group_scores = all_scores[:total_mols]
+                all_scores = all_scores[total_mols:]  # Remove used scores
+
+                # Rank the results
+                ranked_file = self.rank_results(
+                    sdf_files, group_scores, use_packing, docking_program
+                )
+
+                if ranked_file:
+                    result_files.append(ranked_file)
+        else:
+            # Legacy format processing - keep for backward compatibility
+            grouped_poses = {}
+            for pose_info in scored_poses:
+                if len(pose_info) != 2:
+                    logger.warning(f"Unexpected pose info format: {pose_info}")
+                    continue
+
+                docked_sdf, scores = pose_info
+                # Use the directory as a key to group related poses
+                dir_key = os.path.dirname(docked_sdf)
+                if dir_key not in grouped_poses:
+                    grouped_poses[dir_key] = []
+                grouped_poses[dir_key].append((docked_sdf, scores))
+
+            # Process each group of poses
+            for dir_key, pose_group in grouped_poses.items():
+                sdf_files = [p[0] for p in pose_group]
+                # Flatten the scores if they're lists
+                all_scores = []
+                for _, score_list in pose_group:
+                    if isinstance(score_list, list):
+                        all_scores.extend(score_list)
+                    elif isinstance(score_list, (float, int)):
+                        all_scores.append(score_list)
+                    elif isinstance(score_list, np.ndarray):
+                        all_scores.extend(score_list.tolist())
+                    else:
+                        logger.warning(f"Unexpected score type: {type(score_list)}")
+
+                # Determine if packing was used based on file name pattern
+                use_packing = any(
+                    "Packed" in os.path.basename(f) or "_pack_" in os.path.basename(f)
+                    for f in sdf_files
+                )
+
+                # Get the docking program name from the file path
+                docking_program = "smina"  # Default
+                for f in sdf_files:
+                    if "gnina" in f:
+                        docking_program = "gnina"
+                        break
+
+                # Rank the results
+                ranked_file = self.rank_results(
+                    sdf_files, all_scores, use_packing, docking_program
+                )
+
+                if ranked_file:
+                    result_files.append(ranked_file)
+
+        return result_files
+
 
 class DockingPipeline:
     """Main docking pipeline class that orchestrates the docking process."""
@@ -272,16 +591,20 @@ class DockingPipeline:
         self.docking_engine = DockingEngine(config.docking_config)
         self.results_processor = ResultsProcessor(config.top_k)
 
+        # Create uninitialized models
+        self.pack_model = None
+        self.score_model = None
+
         logger.info("Initializing machine learning models...")
 
-        # Initialize models only if we're going to use them
+        # Initialize Pack model if needed
         if config.use_packing:
-            logger.info(f"Loading Pack model from {config.pack_config.checkpoint_path}")
+            logger.info(f"Creating Pack model for side-chain packing...")
             self.pack_model = Pack(recycle_strategy="sample")
+            # Note: We don't load weights here - they'll be loaded during sc_pack
 
-        logger.info(
-            f"Loading Aposcore model from {config.aposcore_config.checkpoint_path}"
-        )
+        # Always initialize Aposcore model
+        logger.info(f"Creating Aposcore model for pose scoring...")
         self.score_model = Aposcore(
             35,
             hidden_dim=config.aposcore_config.hidden_dim,
@@ -291,147 +614,210 @@ class DockingPipeline:
             atten_active_fuc=config.aposcore_config.attention_activation,
             num_layers=config.aposcore_config.num_layers,
             interact_type=config.aposcore_config.interaction_type,
+            n_gaussians=config.aposcore_config.n_gaussians,
         )
+        # Note: We don't load weights here - they'll be loaded during get_mdn_score
 
     def run(
         self, ligand_list: List[str], protein_list: List[str], ref_lig_list: List[str]
     ) -> List[str]:
         """
-        Run the complete docking pipeline.
+        Run the docking pipeline.
 
         Args:
-            ligand_list: List of ligand file paths
-            protein_list: List of protein file paths
-            ref_lig_list: List of reference ligand file paths
+            ligand_list: List of paths to ligand files
+            protein_list: List of paths to protein files
+            ref_lig_list: List of paths to reference ligand files
 
         Returns:
-            List of paths to the final ranked docking result files
+            List of paths to docked ligand files
         """
+        # Use the configuration from self.config
         config = self.config
-        ensure_dir(config.output_dir)
 
-        # Step 1: Extract protein pockets
-        logger.info("Extracting protein pockets...")
+        # Step 1: Extract pockets from proteins using reference ligands
+        logger.info("Extracting pockets from proteins...")
         pocket_list = self.pocket_extractor.extract_pockets(
             protein_list, ref_lig_list, config.output_dir
         )
 
-        result_files = []
-        ids_list = [os.path.basename(i).split("_ligand")[0] for i in ligand_list]
+        try:
+            # Decide on strategy: packing or direct docking
+            if config.use_packing:
+                # Step 2a: With packing - do side chain packing first
+                logger.info("Running side chain packing...")
+                # Create a PackingConfig object from our existing config parameters
+                from apodock.Pack_sc.inference import PackingConfig
 
-        # Decide on strategy: packing or direct docking
-        if config.use_packing:
-            # Step 2a: With packing - do side chain packing first
-            logger.info("Running side chain packing...")
-            cluster_packs_list = sc_pack(
-                ligand_list,
-                pocket_list,
-                protein_list,
-                self.pack_model,
-                config.pack_config.checkpoint_path,
-                config.pack_config.device,
-                config.pack_config.packing_batch_size,
-                config.pack_config.packs_per_design,
-                config.output_dir,
-                config.pack_config.temperature,
-                config.pack_config.ligandmpnn_path,
-                apo2holo=False,
-                num_clusters=config.pack_config.num_clusters,
+                packing_config = PackingConfig(
+                    batch_size=config.pack_config.packing_batch_size,
+                    number_of_packs_per_design=config.pack_config.packs_per_design,
+                    temperature=config.pack_config.temperature,
+                    n_recycle=3,  # Default value
+                    resample=True,  # Default value
+                    apo2holo=False,  # Explicitly set to False
+                )
+
+                cluster_packs_list = sc_pack(
+                    ligand_list,
+                    pocket_list,
+                    protein_list,
+                    self.pack_model,
+                    config.pack_config.checkpoint_path,
+                    config.pack_config.device,
+                    config.output_dir,
+                    config=packing_config,
+                    ligandmpnn_path=config.pack_config.ligandmpnn_path,
+                    num_clusters=config.pack_config.num_clusters,
+                )
+
+                # Step 2b: With packing - dock ligands to packed proteins
+                logger.info("Docking ligands to packed proteins...")
+                docking_results = self.docking_engine.dock_to_packed_proteins(
+                    ligand_list, cluster_packs_list, ref_lig_list, config.output_dir
+                )
+                docked_ligands, packed_proteins_used = (
+                    docking_results  # Unpack the results
+                )
+            else:
+                # Step 2c: Without packing - dock ligands directly to extracted pockets
+                logger.info("Docking ligands to protein pockets...")
+                docked_ligands = self.docking_engine.dock_to_pockets(
+                    ligand_list, pocket_list, ref_lig_list, config.output_dir
+                )
+
+            # Step 3: Score docked poses
+            logger.info("Scoring docked poses...")
+            scoring_config = ScoringConfig(
+                batch_size=64,  # Default batch size
+                dis_threshold=5.0,  # Default distance threshold
+                output_dir=config.output_dir,
             )
 
-            # Step 3a: Dock against packed structures
-            for i, protein_id in enumerate(ids_list):
-                logger.info(f"Docking for {protein_id}...")
-                protein_dir = os.path.dirname(pocket_list[i])
-
-                # Get packed pockets for this protein
-                packed_pockets = next(
-                    (p for p in cluster_packs_list if any(protein_id in j for j in p)),
-                    None,
+            # Prepare protein structures for scoring
+            if config.use_packing:
+                # When using packing, use the exact packed protein structures that were used for docking
+                logger.info(
+                    f"Using {len(packed_proteins_used)} packed protein structures for scoring"
                 )
-
-                if not packed_pockets:
+                # Verify we have matching lengths
+                if len(packed_proteins_used) != len(docked_ligands):
+                    logger.error(
+                        f"Mismatch between docked ligands ({len(docked_ligands)}) and packed proteins ({len(packed_proteins_used)})"
+                    )
+                    raise ApoDockError(
+                        "Inconsistent number of docked poses and protein structures"
+                    )
+                scoring_pocket_files = packed_proteins_used
+            else:
+                # For direct docking, there should be a 1:1 relationship between docked ligands and pockets
+                if len(docked_ligands) != len(pocket_list):
                     logger.warning(
-                        f"No packed pockets found for {protein_id}, skipping"
+                        f"Mismatch in direct docking: {len(docked_ligands)} docked ligands but {len(pocket_list)} pockets"
                     )
-                    continue
+                    # If there's a mismatch, use the shortest list length to avoid index errors
+                    min_len = min(len(docked_ligands), len(pocket_list))
+                    docked_ligands = docked_ligands[:min_len]
+                    scoring_pocket_files = pocket_list[:min_len]
+                else:
+                    scoring_pocket_files = pocket_list
 
-                # Clean up old docked files
-                old_files = [
-                    os.path.join(protein_dir, f)
-                    for f in os.listdir(protein_dir)
-                    if f.endswith(".sdf") and "_pack_" in f
-                ]
-                for old_file in old_files:
-                    os.remove(old_file)
+            scored_poses = get_mdn_score(
+                docked_ligands,
+                scoring_pocket_files,
+                self.score_model,
+                config.aposcore_config.checkpoint_path,
+                config.aposcore_config.device,
+                config=scoring_config,
+            )
 
-                # Dock against each packed pocket
-                out_sdfs = []
-                for packed_pdb in packed_pockets:
-                    out_sdf = self.docking_engine.dock(
-                        ligand_list[i],
-                        packed_pdb,
-                        ref_lig_list[i],
-                        protein_dir,
-                        use_packing=True,
+            # Convert scores to a format that the results processor can handle
+            if isinstance(scored_poses, np.ndarray):
+                logger.info(f"Received {len(scored_poses)} scores from get_mdn_score")
+
+                # Count the total number of molecules across all SDF files
+                total_molecules = 0
+                for sdf_file in docked_ligands:
+                    mols, _ = read_sdf_file(sdf_file, save_mols=True)
+                    if mols is not None:
+                        total_molecules += len(mols)
+
+                logger.info(
+                    f"Found a total of {total_molecules} molecules across {len(docked_ligands)} SDF files"
+                )
+
+                # Check if scores match the total number of molecules
+                if len(scored_poses) != total_molecules:
+                    logger.warning(
+                        f"Mismatch between scores ({len(scored_poses)}) and molecules ({total_molecules})"
                     )
-                    out_sdfs.append(out_sdf)
 
-                # Score docked poses
-                logger.info(f"Scoring docked poses for {protein_id}...")
-                scores = get_mdn_score(
-                    out_sdfs,
-                    packed_pockets,
-                    self.score_model,
-                    config.aposcore_config.checkpoint_path,
-                    config.aposcore_config.device,
-                    dis_threshold=5.0,
+                # Create a list of (sdf_file, scores) pairs for processing
+                # We'll let the results processor handle the matching of scores to molecules
+                processed_scores = []
+                score_index = 0
+                for sdf_file in docked_ligands:
+                    # Count molecules in this SDF file
+                    mols, _ = read_sdf_file(sdf_file, save_mols=True)
+                    if mols is None:
+                        continue
+
+                    num_mols = len(mols)
+                    if score_index + num_mols <= len(scored_poses):
+                        # Get scores for molecules in this file
+                        file_scores = scored_poses[score_index : score_index + num_mols]
+                        score_index += num_mols
+                    else:
+                        # If we don't have enough scores, use available ones and log warning
+                        remaining = len(scored_poses) - score_index
+                        if remaining > 0:
+                            file_scores = scored_poses[score_index:]
+                            score_index = len(scored_poses)
+                        else:
+                            # No scores left, set to empty list
+                            file_scores = []
+                        logger.warning(
+                            f"Not enough scores for file {sdf_file}: needed {num_mols}, got {len(file_scores)}"
+                        )
+
+                    processed_scores.append((sdf_file, file_scores))
+
+                scored_poses = processed_scores
+                logger.info(
+                    f"Prepared scored poses for processing: {len(processed_scores)} SDF files with scores"
                 )
 
-                # Rank and process results
-                result_file = self.results_processor.rank_results(
-                    out_sdfs,
-                    scores,
-                    use_packing=True,
-                    docking_program=config.docking_config.program,
-                )
-                if result_file:
-                    result_files.append(result_file)
-        else:
-            # Step 2b: Without packing - direct docking
-            for i, protein_id in enumerate(ids_list):
-                logger.info(f"Docking for {protein_id} without packing...")
-                protein_dir = os.path.dirname(pocket_list[i])
+            # Step 4: Process results
+            logger.info("Processing results...")
+            final_poses = self.results_processor.process(
+                scored_poses, config.output_dir
+            )
 
-                # Dock against the pocket directly
-                out_sdf = self.docking_engine.dock(
-                    ligand_list[i],
-                    pocket_list[i],
-                    ref_lig_list[i],
-                    protein_dir,
-                    use_packing=False,
-                )
+            logger.info(
+                f"Docking completed successfully. Results saved to {config.output_dir}"
+            )
+            return final_poses
 
-                # Score the docked poses
-                logger.info(f"Scoring docked poses for {protein_id}...")
-                scores = get_mdn_score(
-                    [out_sdf],
-                    [pocket_list[i]],
-                    self.score_model,
-                    config.aposcore_config.checkpoint_path,
-                    config.aposcore_config.device,
-                    dis_threshold=5.0,
-                )
+        except Exception as e:
+            logger.error(f"Error during docking: {str(e)}")
+            # Clean up GPU memory if available
+            try:
+                import torch
 
-                # Rank and process results
-                result_file = self.results_processor.rank_results(
-                    [out_sdf],
-                    scores,
-                    use_packing=False,
-                    docking_program=config.docking_config.program,
-                )
-                if result_file:
-                    result_files.append(result_file)
+                if torch.cuda.is_available() and config.pack_config.device.startswith(
+                    "cuda"
+                ):
+                    from apodock.utils import ModelManager
 
-        logger.info("Docking pipeline completed successfully")
-        return result_files
+                    ModelManager.cleanup_gpu_memory(config.pack_config.device)
+                if (
+                    torch.cuda.is_available()
+                    and config.aposcore_config.device.startswith("cuda")
+                ):
+                    from apodock.utils import ModelManager
+
+                    ModelManager.cleanup_gpu_memory(config.aposcore_config.device)
+            except Exception as cleanup_error:
+                logger.error(f"Error during GPU cleanup: {str(cleanup_error)}")
+
+            raise
