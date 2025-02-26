@@ -3,9 +3,10 @@ import subprocess
 from typing import List, Optional
 from rdkit import Chem
 import numpy as np
+import torch
 
 from apodock.config import PipelineConfig, DockingEngineConfig
-from apodock.utils import ensure_dir, ApoDockError, logger
+from apodock.utils import ensure_dir, ApoDockError, logger, set_random_seed
 from apodock.Pack_sc.inference import sc_pack
 from apodock.Pack_sc.Packnn import Pack
 from apodock.Aposcore.inference_dataset import (
@@ -88,16 +89,18 @@ class PocketExtractor:
 class DockingEngine:
     """Interface to external docking programs like gnina or smina."""
 
-    def __init__(self, config: DockingEngineConfig):
+    def __init__(self, config: DockingEngineConfig, random_seed: int = 42):
         """
         Initialize the docking engine.
 
         Args:
             config: Configuration for the docking engine
+            random_seed: Random seed for reproducibility (default: 42)
         """
         self.config = config
         self.program = config.program
         self.gnina_path = config.gnina_path
+        self.random_seed = random_seed
 
         # Log whether box center and size are defined in the config
         if config.box_center:
@@ -113,6 +116,8 @@ class DockingEngine:
             logger.info(
                 "Box size not defined in config, will use reference ligand for box definition"
             )
+
+        logger.info(f"Docking engine initialized with random seed: {random_seed}")
 
     def dock(
         self,
@@ -163,6 +168,7 @@ class DockingEngine:
                 f"{self.gnina_path} --receptor {protein} --ligand {ligand} "
                 f"--autobox_ligand {ref_lig} --autobox_add {self.config.autobox_add} "
                 f"--num_modes {self.config.num_modes} --exhaustiveness {self.config.exhaustiveness} "
+                f"--seed {self.random_seed} "
                 f"--out {output_path}"
             )
         else:
@@ -177,7 +183,8 @@ class DockingEngine:
                 f"--center_z {self.config.box_center[2]} --size_x {self.config.box_size[0]} "
                 f"--size_y {self.config.box_size[1]} --size_z {self.config.box_size[2]} "
                 f"--num_modes {self.config.num_modes} -o {output_path} "
-                f"--exhaustiveness {self.config.exhaustiveness}"
+                f"--exhaustiveness {self.config.exhaustiveness} "
+                f"--seed {self.random_seed}"
             )
 
         try:
@@ -587,8 +594,15 @@ class DockingPipeline:
             config: Configuration for the docking pipeline
         """
         self.config = config
+
+        # Set random seed for reproducibility
+        random_seed = config.random_seed
+        set_random_seed(random_seed)
+
+        logger.info(f"Setting random seed to {random_seed} for reproducibility")
+
         self.pocket_extractor = PocketExtractor(config.pocket_distance)
-        self.docking_engine = DockingEngine(config.docking_config)
+        self.docking_engine = DockingEngine(config.docking_config, random_seed)
         self.results_processor = ResultsProcessor(config.top_k)
 
         # Create uninitialized models
@@ -669,6 +683,7 @@ class DockingPipeline:
                     config=packing_config,
                     ligandmpnn_path=config.pack_config.ligandmpnn_path,
                     num_clusters=config.pack_config.num_clusters,
+                    random_seed=config.random_seed,
                 )
 
                 # Step 2b: With packing - dock ligands to packed proteins
@@ -729,6 +744,7 @@ class DockingPipeline:
                 config.aposcore_config.checkpoint_path,
                 config.aposcore_config.device,
                 config=scoring_config,
+                random_seed=config.random_seed,
             )
 
             # Convert scores to a format that the results processor can handle
@@ -802,8 +818,6 @@ class DockingPipeline:
             logger.error(f"Error during docking: {str(e)}")
             # Clean up GPU memory if available
             try:
-                import torch
-
                 if torch.cuda.is_available() and config.pack_config.device.startswith(
                     "cuda"
                 ):

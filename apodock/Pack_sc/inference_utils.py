@@ -6,6 +6,7 @@ from rdkit import Chem
 from Bio.PDB import PDBParser, Superimposer
 from torch_geometric.utils import to_dense_batch
 from apodock.Pack_sc.resampling import resample_loop
+from apodock.utils import set_random_seed
 from apodock.Pack_sc.data_utils import (
     parse_PDB,
     get_clean_res_list,
@@ -73,13 +74,26 @@ def compute_rmsd_matrix(pockets):
     return rmsd_matrix
 
 
-def cluster_pockets(pdb_files, num_clusters=6):
-    """Clusters protein pockets based on structural similarity."""
+def cluster_pockets(pdb_files, num_clusters=6, random_seed=42):
+    """
+    Clusters protein pockets based on structural similarity.
+
+    Args:
+        pdb_files: List of PDB file paths to cluster
+        num_clusters: Number of clusters to create (default: 6)
+        random_seed: Random seed for reproducibility (default: 42)
+
+    Returns:
+        List of PDB file paths representing cluster centers
+    """
+    # Set random seed for KMedoids clustering
+    set_random_seed(random_seed, log=False)
+
     pockets = parse_pockets(pdb_files)
     rmsd_matrix = compute_rmsd_matrix(pockets)
-    clustering = KMedoids(n_clusters=num_clusters, metric="precomputed").fit(
-        rmsd_matrix
-    )
+    clustering = KMedoids(
+        n_clusters=num_clusters, metric="precomputed", random_state=random_seed
+    ).fit(rmsd_matrix)
     cluster_centers = clustering.medoid_indices_
 
     cluster_names = [pdb_files[idx] for idx in cluster_centers]

@@ -296,6 +296,7 @@ def sc_pack(
     config=None,
     ligandmpnn_path=None,
     num_clusters=6,
+    random_seed=42,
 ):
     """
     Perform side-chain packing on protein pockets.
@@ -311,6 +312,7 @@ def sc_pack(
         config: PackingConfig object with packing parameters
         ligandmpnn_path: Path to LigandMPNN model
         num_clusters: Number of clusters for pocket clustering (default: 6)
+        random_seed: Random seed for reproducibility (default: 42)
 
     Returns:
         List of lists containing paths to clustered packed structures
@@ -320,7 +322,10 @@ def sc_pack(
         RuntimeError: If packing or clustering fails
     """
     # Import ModelManager here to avoid circular imports
-    from apodock.utils import ModelManager
+    from apodock.utils import ModelManager, set_random_seed
+
+    # Set random seed for reproducibility
+    set_random_seed(random_seed, log=True)
 
     # Use default configuration if none provided
     if config is None:
@@ -371,7 +376,9 @@ def sc_pack(
                 cluster_packs_list.append([])
                 continue
 
-            cluster_packs = cluster_pockets(packed_files, num_clusters=num_clusters)
+            cluster_packs = cluster_pockets(
+                packed_files, num_clusters=num_clusters, random_seed=random_seed
+            )
             cluster_packs_list.append(cluster_packs)
 
         # Clean up GPU memory

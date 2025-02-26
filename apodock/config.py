@@ -72,6 +72,7 @@ class PipelineConfig:
     use_packing: bool = True
     top_k: int = 40
     pocket_distance: float = 10.0  # Distance in Angstroms for pocket extraction
+    random_seed: int = 42  # Random seed for reproducibility
 
 
 def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
@@ -177,5 +178,7 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
         pipeline_config.top_k = config_dict["top_k"]
     if "pocket_distance" in config_dict:
         pipeline_config.pocket_distance = config_dict["pocket_distance"]
+    if "random_seed" in config_dict:
+        pipeline_config.random_seed = config_dict["random_seed"]
 
     return pipeline_config

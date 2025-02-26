@@ -262,6 +262,7 @@ def get_mdn_score(
     device,
     output_dir=None,
     config=None,
+    random_seed=42,
 ):
     """
     Calculate Mixture Density Network (MDN) scores for docked poses.
@@ -274,6 +275,7 @@ def get_mdn_score(
         device: Device to run inference on ('cpu', 'cuda', etc.)
         output_dir: Output directory for saving results (default: None)
         config: ScoringConfig object with scoring parameters (default: None)
+        random_seed: Random seed for reproducibility (default: 42)
 
     Returns:
         numpy.ndarray: Array of MDN scores for the docked poses
@@ -283,7 +285,10 @@ def get_mdn_score(
         RuntimeError: If score calculation fails
     """
     # Import ModelManager here to avoid circular imports
-    from apodock.utils import ModelManager
+    from apodock.utils import ModelManager, set_random_seed
+
+    # Set random seed for reproducibility
+    set_random_seed(random_seed, log=True)
 
     # Use default configuration if none provided
     if config is None:

@@ -2,7 +2,13 @@ import sys
 import argparse
 
 from apodock.config import load_config_from_yaml
-from apodock.utils import logger, ApoDockError, ensure_dir, validate_input_files
+from apodock.utils import (
+    logger,
+    ApoDockError,
+    ensure_dir,
+    validate_input_files,
+    set_random_seed,
+)
 from apodock.pipeline import DockingPipeline
 
 
@@ -35,6 +41,9 @@ def main():
         logger.info(f"Loading configuration from YAML file: {args.config}")
         config = load_config_from_yaml(args.config)
 
+        # Set random seed for reproducibility
+        set_random_seed(config.random_seed)
+
         # Get input files from configuration
         if not config.input_config.ligand_file or not config.input_config.protein_file:
             raise ApoDockError(
@@ -60,6 +69,7 @@ def main():
             f"Running ApoDock with {'packing' if config.use_packing else 'direct docking'}"
         )
         logger.info(f"Output directory: {config.output_dir}")
+        logger.info(f"Using random seed: {config.random_seed}")
 
         # Create and run pipeline
         pipeline = DockingPipeline(config)

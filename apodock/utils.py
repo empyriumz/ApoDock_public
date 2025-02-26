@@ -4,6 +4,8 @@ from typing import Optional, Any, Union
 import pandas as pd
 from rdkit import Chem
 import torch
+import random
+import numpy as np
 
 # Configure logger
 logging.basicConfig(
@@ -12,6 +14,32 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger("apodock")
+
+
+def set_random_seed(seed: int, log: bool = True) -> None:
+    """
+    Set random seed for all random number generators to ensure reproducibility.
+
+    This function sets the seed for:
+    - Python's built-in random module
+    - NumPy's random number generator
+    - PyTorch's random number generator (both CPU and CUDA)
+
+    Args:
+        seed: Integer seed for random number generators
+        log: Whether to log the seed setting (default: True)
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    # Set environment variable for external programs like GNINA
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    if log:
+        logger.info(f"Random seed set to {seed} for reproducibility")
 
 
 class ApoDockError(Exception):
