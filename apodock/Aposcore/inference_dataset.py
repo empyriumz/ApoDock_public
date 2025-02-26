@@ -265,7 +265,7 @@ def get_mdn_score(
     random_seed=42,
 ):
     """
-    Calculate Mixture Density Network (MDN) scores for docked poses.
+    Calculate Docking scores for docked poses.
 
     Args:
         sdf_files: List of SDF file paths containing docked poses

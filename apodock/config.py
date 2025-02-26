@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 import yaml
+from apodock.utils import logger  # Import logger for warning messages
 
 
 @dataclass
@@ -73,6 +74,15 @@ class PipelineConfig:
     top_k: int = 40
     pocket_distance: float = 10.0  # Distance in Angstroms for pocket extraction
     random_seed: int = 42  # Random seed for reproducibility
+    # New options moved from command line arguments
+    screening_mode: bool = (
+        False  # Run in pocket screening mode (outputs scores only, no pose files)
+    )
+    output_scores_file: str = (
+        "pocket_scores.csv"  # File to save pocket scores to (in screening mode)
+    )
+    save_poses: bool = False  # Save pose files even in screening mode
+    rank_by: str = "aposcore"  # Which score to use for ranking pocket designs
 
 
 def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
@@ -180,5 +190,27 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
         pipeline_config.pocket_distance = config_dict["pocket_distance"]
     if "random_seed" in config_dict:
         pipeline_config.random_seed = config_dict["random_seed"]
+
+    # Set new options moved from command line arguments
+    if "screening_mode" in config_dict:
+        pipeline_config.screening_mode = config_dict["screening_mode"]
+    if "output_scores_file" in config_dict:
+        pipeline_config.output_scores_file = config_dict["output_scores_file"]
+    if "save_poses" in config_dict:
+        pipeline_config.save_poses = config_dict["save_poses"]
+    if "rank_by" in config_dict:
+        # Validate rank_by value
+        valid_rank_options = [
+            "aposcore",
+            "gnina_affinity",
+            "gnina_cnn_score",
+            "gnina_cnn_affinity",
+        ]
+        if config_dict["rank_by"] in valid_rank_options:
+            pipeline_config.rank_by = config_dict["rank_by"]
+        else:
+            logger.warning(
+                f"Invalid rank_by value: {config_dict['rank_by']}. Using default: aposcore"
+            )
 
     return pipeline_config

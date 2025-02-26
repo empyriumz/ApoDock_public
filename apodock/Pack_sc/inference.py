@@ -297,6 +297,7 @@ def sc_pack(
     ligandmpnn_path=None,
     num_clusters=6,
     random_seed=42,
+    cleanup_intermediates=False,
 ):
     """
     Perform side-chain packing on protein pockets.
@@ -313,6 +314,7 @@ def sc_pack(
         ligandmpnn_path: Path to LigandMPNN model
         num_clusters: Number of clusters for pocket clustering (default: 6)
         random_seed: Random seed for reproducibility (default: 42)
+        cleanup_intermediates: Whether to clean up intermediate results (default: False)
 
     Returns:
         List of lists containing paths to clustered packed structures
@@ -369,6 +371,7 @@ def sc_pack(
         # Step 3: Cluster the packed structures
         print(f"Clustering packed structures into {num_clusters} clusters per input...")
         cluster_packs_list = []
+        
         for i, packed_files in enumerate(packed_files_list):
             print(f"Clustering structures for input {i+1}/{len(packed_files_list)}")
             if not packed_files:
@@ -380,6 +383,38 @@ def sc_pack(
                 packed_files, num_clusters=num_clusters, random_seed=random_seed
             )
             cluster_packs_list.append(cluster_packs)
+            
+            # Clean up intermediate files if requested
+            if cleanup_intermediates:
+                # Create a set of directories that will need cleanup
+                cleanup_dirs = set()
+                
+                # Remove packed files that weren't selected during clustering
+                selected_files = set()
+                for cluster_packs in cluster_packs_list:
+                    selected_files.update(cluster_packs)
+                
+                # Find all packed files and remove those not in selected_files
+                for file_path in packed_files:
+                    if file_path not in selected_files:
+                        try:
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                                print(f"Removed intermediate packed structure: {file_path}")
+                                # Add the directory to our cleanup list
+                                cleanup_dirs.add(os.path.dirname(file_path))
+                        except Exception as e:
+                            print(f"Warning: Failed to remove {file_path}: {str(e)}")
+                
+                # Now check if any directories are empty and remove them
+                for dir_path in cleanup_dirs:
+                    try:
+                        # Check if directory exists and is empty
+                        if os.path.exists(dir_path) and os.path.isdir(dir_path) and not os.listdir(dir_path):
+                            os.rmdir(dir_path)
+                            print(f"Removed empty directory: {dir_path}")
+                    except Exception as e:
+                        print(f"Warning: Failed to remove directory {dir_path}: {str(e)}")
 
         # Clean up GPU memory
         ModelManager.cleanup_gpu_memory(device)

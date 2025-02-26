@@ -1,11 +1,12 @@
 import os
 import logging
-from typing import Optional, Any, Union
+from typing import Optional, Any, Union, List, Dict
 import pandas as pd
 from rdkit import Chem
 import torch
 import random
 import numpy as np
+import re
 
 # Configure logger
 logging.basicConfig(
@@ -34,6 +35,8 @@ def set_random_seed(seed: int, log: bool = True) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     # Set environment variable for external programs like GNINA
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -173,6 +176,91 @@ def validate_input_files(
 
     if ref_lig_file and not os.path.exists(ref_lig_file):
         raise ApoDockError(f"Reference ligand file not found: {ref_lig_file}")
+
+
+def parse_gnina_scores(output_text: str) -> List[Dict[str, float]]:
+    """
+    Parse GNINA docking scores from the output text.
+
+    Args:
+        output_text: GNINA output text
+
+    Returns:
+        List of dictionaries containing scores for each pose
+    """
+    scores = []
+    lines = output_text.split("\n")
+
+    # Find the score table
+    header = "mode |  affinity  |  intramol  |    CNN     |   CNN"
+
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            # Skip the header, subheader, and separator lines
+            score_lines = lines[i + 3 :]  # Start after separator line
+            for line in score_lines:
+                if not line.strip():  # Stop at empty line
+                    break
+                try:
+                    # Split on whitespace and extract values
+                    parts = line.strip().split()
+                    scores.append(
+                        {
+                            "affinity": float(parts[1]),  # Vina score
+                            "intramol": float(parts[2]),  # Intramolecular score
+                            "cnn_score": float(parts[3]),  # CNN pose score
+                            "cnn_affinity": float(parts[4]),  # CNN affinity
+                        }
+                    )
+                except (IndexError, ValueError) as e:
+                    if not line.strip().startswith("WARNING"):
+                        logger.warning(f"Could not parse score line: {line.strip()}")
+                    continue
+            break
+
+    if not scores:
+        logger.warning("No valid scores found in GNINA output")
+
+    return scores
+
+
+def extract_gnina_scores_from_file(sdf_file: str) -> Optional[List[Dict[str, float]]]:
+    """
+    Extract GNINA scores from an SDF file by looking for the original GNINA output
+    in the same directory.
+
+    Args:
+        sdf_file: Path to the SDF file containing docked poses
+
+    Returns:
+        List of dictionaries containing scores for each pose, or None if not found
+    """
+    # Get the directory and base filename
+    directory = os.path.dirname(sdf_file)
+    base_name = os.path.basename(sdf_file).split(".")[0]
+
+    # Look for a log file with the same base name
+    log_file = os.path.join(directory, f"{base_name}.log")
+
+    if not os.path.exists(log_file):
+        # Try to find any log file in the directory
+        log_files = [f for f in os.listdir(directory) if f.endswith(".log")]
+        if log_files:
+            log_file = os.path.join(directory, log_files[0])
+        else:
+            logger.warning(f"No GNINA log file found for {sdf_file}")
+            return None
+
+    try:
+        with open(log_file, "r") as f:
+            log_content = f.read()
+
+        # Parse the scores from the log content
+        scores = parse_gnina_scores(log_content)
+        return scores
+    except Exception as e:
+        logger.warning(f"Error extracting GNINA scores from log file: {str(e)}")
+        return None
 
 
 class ModelManager:

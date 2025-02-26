@@ -35,21 +35,85 @@ Then set the enviroment path:
 export PATH="$PATH:/your/path/to/ApoDock_public/docking_program"
 ```
 
-## Inference
+## Configuration-based Approach
 
-A demo:
-```
-python docking.py --protein ./demo/1a0q/1a0q_protein.pdb --ligand ./demo/1a0q/1a0q_ligand.sdf --ref_lig ./demo/1a0q/1a0q_ligand.sdf --packing
-```
-Use `.CSV` file for docking:
-```
-python docking.py --csv docking_list.csv --packing
-```
------------------------------------------------------------------------------------------------------
-Output example will in defalut dir `docking_results`,  you can use `--out_dir` option to determine the output position.
+ApoDock now uses a YAML configuration file for all settings. This provides a centralized, flexible way to configure the docking pipeline.
 
+### Basic Configuration
 
------------------------------------------------------------------------------------------------------
+Create a configuration file (e.g., `config.yaml`):
+
+```yaml
+# General pipeline settings
+output_dir: ./docking_results
+use_packing: true
+top_k: 40
+pocket_distance: 10.0
+random_seed: 42
+
+# Input file settings
+input:
+  protein_file: ./demo/1a0q/1a0q_protein.pdb
+  ligand_file: ./demo/1a0q/1a0q_ligand.sdf
+  ref_lig_file: ./demo/1a0q/1a0q_ligand.sdf
+
+# Docking engine settings
+docking:
+  program: gnina
+  gnina_path: /path/to/gnina
+```
+
+### Running ApoDock
+
+Run ApoDock with your configuration file:
+
+```bash
+python -m apodock.docking --config config.yaml
+```
+
+To view the loaded configuration without running the pipeline:
+
+```bash
+python -m apodock.docking --config config.yaml --show_config
+```
+
+### Pocket Screening Mode
+
+For pocket design screening, create a configuration with screening options:
+
+```yaml
+# General settings
+output_dir: ./screening_results
+use_packing: true
+
+# Screening options
+screening_mode: true
+output_scores_file: pocket_scores.csv
+save_poses: false
+rank_by: aposcore  # Options: aposcore, gnina_affinity, gnina_cnn_score, gnina_cnn_affinity
+
+# Input files
+input:
+  protein_file: ./demo/1a0q/1a0q_protein.pdb
+  ligand_file: ./demo/1a0q/1a0q_ligand.sdf
+  ref_lig_file: ./demo/1a0q/1a0q_ligand.sdf
+```
+
+### Multiple Configuration Files
+
+Create different configuration files for different use cases:
+
+- `standard_docking.yaml` - For standard docking with pose generation
+- `screening_aposcore.yaml` - For pocket screening with ApoScore ranking
+- `screening_gnina.yaml` - For pocket screening with GNINA score ranking
+
+## Output
+
+Results will be saved to the directory specified in the configuration file (`output_dir`). In screening mode, a CSV file with ranking information will be generated.
+
+## Advanced Configuration
+
+See the sample configuration file in `apodock/configs/config.yaml` for all available options and their descriptions.
 
 ## Acknowledgements
 This work draws upon code from [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), [OpenFold](https://github.com/aqlaboratory/openfold), [RTMscore](https://github.com/sc8668/RTMScore), and [PIPPack](https://github.com/Kuhlman-Lab/PIPPack), and we would like to thank them for their excellent contributions. these studies are important and interesting.
