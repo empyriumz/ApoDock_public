@@ -72,7 +72,8 @@ class Aposcore(nn.Module):
         self.N_p = N_p
 
         ## Get batch indexes for ligand-target combined features
-        C_batch =torch.tensor(range(B)).unsqueeze(-1).unsqueeze(-1).repeat(1, N_l, N_p)
+        device = Interact_mask.device
+        C_batch = torch.tensor(range(B), device=device).unsqueeze(-1).unsqueeze(-1).repeat(1, N_l, N_p)
         C_batch = C_batch[Interact_mask]
         
         
@@ -119,7 +120,8 @@ class Aposcore(nn.Module):
         
     def sample(self, pi, sigma, mu):
         k = torch.multinomial(pi, 1).squeeze(-1) # get the index of the gaussian
-        indices = torch.tensor(range(self.B)).unsqueeze(-1).repeat(1, self.N_l).unsqueeze(-1)
+        device = pi.device
+        indices = torch.tensor(range(self.B), device=device).unsqueeze(-1).repeat(1, self.N_l).unsqueeze(-1)
         indices = indices[k == 1].squeeze(-1)
         mu = mu[indices]
         sigma = sigma[indices]

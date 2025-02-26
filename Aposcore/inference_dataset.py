@@ -182,7 +182,16 @@ def val(model, dataloader, device, dis_threshold=5.0):
 
 
 
-def get_mdn_score(sdf_files, pocket_files, model, ckpt, device,dis_threshold=5.0):
+def get_mdn_score(sdf_files, pocket_files, model, ckpt, device, dis_threshold=5.0, seed=None):
+    # Set random seed for reproducibility if provided
+    if seed is not None:
+        import torch
+        import numpy as np
+        import random
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
     load_model_dict(model,ckpt)
     model = model.to(device)

@@ -2,20 +2,55 @@ import os
 import sys
 import argparse
 import subprocess
-import torch
 sys.path.append('Pack_sc')
 sys.path.append('Aposcore')
 from Pack_sc.inference import sc_pack
 from Pack_sc.Packnn import Pack
 from Aposcore.inference_dataset import get_mdn_score, read_sdf_file
 from Aposcore.Aposcore import Aposcore
-from Bio.PDB import PDBParser, PDBIO, Superimposer, NeighborSearch
 import numpy as np
+import torch
+import random
 from rdkit import Chem
 import argparse
 import pandas as pd
 
-def rank_docking_results(docked_sdfs, mdn_scores, top_k=10, packing=True, docking_program="smina"):
+def set_seed(seed=42):
+    """
+    Set random seeds for all components used in the docking pipeline.
+    This ensures reproducibility across runs.
+    
+    Args:
+        seed (int): Random seed to use
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    # Set RDKit seed if available
+    try:
+        from rdkit import RDRandom
+        RDRandom.seed(seed)
+    except ImportError:
+        pass
+
+def rank_docking_results(docked_sdfs, mdn_scores, top_k=10, packing=True, docking_program="smina", seed=None):
+    # Set random seed for reproducibility if provided
+    if seed is not None:
+        import random
+        import numpy as np
+        random.seed(seed)
+        np.random.seed(seed)
+        # Set RDKit seed if available
+        try:
+            from rdkit import RDRandom
+            RDRandom.seed(seed)
+        except ImportError:
+            pass
+
     if docking_program == "smina.static":
         docking_program = "smina"
     else:
@@ -82,7 +117,8 @@ def vina_dock(
             num_modes,
             autobox_add,
             packing,
-            out_dir
+            out_dir,
+            seed=None
             ):
     """
     This function docks a ligand to a protein using gnina.
@@ -107,20 +143,24 @@ def vina_dock(
         elif docking_program == "gnina":
             output_dir = os.path.join(out_dir, f"gnina_dock_{ligand_id}.sdf")
 
-
+    docking_program = "/host/gnina"
+    
+    # Add seed parameter if provided
+    seed_param = f"--seed {seed}" if seed is not None else ""
+    
     if ref_lig:
         # ref_lig_path = os.path.join(data_path, ref_lig)
         
         gnina_cmd = f"{docking_program} --receptor {protein} --ligand {ligand} --autobox_ligand {ref_lig} \
-            --autobox_add {autobox_add} --num_modes {num_modes} --exhaustiveness {exhaustiveness} --out {output_dir}"
+            --autobox_add {autobox_add} --num_modes {num_modes} --exhaustiveness {exhaustiveness} {seed_param} --out {output_dir}"
     else:
         if not np.all(box_center) or not np.all(box_size):
             sys.exit("The box center and size must be provided")
 
-        gnina_cmd = f"{docking_program} -r {protein_path} -l {ligand_path} --center_x {box_center[0]} \
+        gnina_cmd = f"{docking_program} -r {protein} -l {ligand} --center_x {box_center[0]} \
             --center_y {box_center[1]} --center_z {box_center[2]} --size_x {box_size[0]}  \
                 --size_y {box_size[1]} --size_z {box_size[2]} --num_modes {num_modes} \
-                    -o {output_dir} --exhaustiveness {exhaustiveness}"
+                    -o {output_dir} --exhaustiveness {exhaustiveness} {seed_param}"
             
     subprocess.run(gnina_cmd, shell=True)
 
@@ -151,6 +191,7 @@ def flex_docking(
             device,
             top_k,
             out_dir,
+            seed=42,
             ):
     """
     This function docks a ligand to a protein using the flexible docking approach.
@@ -159,7 +200,7 @@ def flex_docking(
 
 
     if packing:
-        cluster_packs_list =sc_pack(
+        cluster_packs_list = sc_pack(
             ligand_list,
             pocket_list,
             protein_list,
@@ -172,7 +213,8 @@ def flex_docking(
             temperature,
             ligandmpnn_path,
             apo2holo=False,
-            num_clusters=num_clusters
+            num_clusters=num_clusters,
+            seed=seed
             )
         print("packing complete")
 
@@ -211,12 +253,13 @@ def flex_docking(
                             num_modes,
                             auto_box_add,
                             packing,
-                            out_dir=ids_dir
+                            out_dir=ids_dir,
+                            seed=seed
                             )
                 out_sdfs.append(out_sdf)
             print("Starting to score the docked poses....")
-            socres = get_mdn_score(out_sdfs, packed_pockets, model_mdn, ckpt_mdn, device, dis_threshold=5.0)
-            rank_docking_results(out_sdfs, socres, top_k=top_k, packing=packing, docking_program=docking_program)
+            socres = get_mdn_score(out_sdfs, packed_pockets, model_mdn, ckpt_mdn, device, dis_threshold=5.0, seed=seed)
+            rank_docking_results(out_sdfs, socres, top_k=top_k, packing=packing, docking_program=docking_program, seed=seed)
 
         else:
             print("only docking and rescoring the docked poses....")
@@ -233,14 +276,15 @@ def flex_docking(
                             num_modes,
                             auto_box_add,
                             packing,
-                            out_dir=ids_dir
+                            out_dir=ids_dir,
+                            seed=seed
                             )
             print("Starting to score the docked poses....")
             
-            socres = get_mdn_score([out_sdf], [packed_pdb], model_mdn, ckpt_mdn, device, dis_threshold=5.0)
+            socres = get_mdn_score([out_sdf], [packed_pdb], model_mdn, ckpt_mdn, device, dis_threshold=5.0, seed=seed)
 
             print("Ranking the docked poses....")
-            rank_docking_results([out_sdf], socres, top_k=top_k, packing=packing, docking_program=docking_program)
+            rank_docking_results([out_sdf], socres, top_k=top_k, packing=packing, docking_program=docking_program, seed=seed)
 
     print("docking complete")
 
@@ -296,6 +340,7 @@ def parse_args():
     parser.add_argument("--box_center", type=list, default=None, help="Center of the box")
     parser.add_argument("--box_size", type=list, default=None, help="Size of the box")
     parser.add_argument("--out_dir", type=str, default="./docking_results", help="Output directory for docking results")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
 
 
@@ -303,6 +348,10 @@ def parse_args():
 
 def main():
     args = parse_args()
+    
+    # Set random seed for reproducibility
+    set_seed(args.seed)
+    
     if args.csv:
         ligand_list, protein_list, ref_lig_list = get_data_from_csv(args.csv)
     else:
@@ -348,7 +397,8 @@ def main():
         args.exhaustiveness,
         args.device,
         args.top_k,
-        args.out_dir
+        args.out_dir,
+        seed=args.seed
     )
 
 

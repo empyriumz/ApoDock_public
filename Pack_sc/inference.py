@@ -477,7 +477,17 @@ def sc_pack(
             ligandmpnn_path,
             apo2holo=False,
             num_clusters=6,
+            seed=42,
             ):
+    # Set random seed for reproducibility in this function
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # For KMedoids clustering
+        import random
+        random.seed(seed)
+        
     load_model_dict(model_sc, ckpt_sc)
     model = model_sc.to(device)
     packed_files_list = write_pdbs(
