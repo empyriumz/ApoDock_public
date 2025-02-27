@@ -1,9 +1,9 @@
 import os
-from typing import List, Optional
+from typing import List, Dict, Optional, Tuple
 import numpy as np
 from rdkit import Chem
 
-from apodock.utils import logger
+from apodock.utils import logger, extract_gnina_scores_from_file
 from apodock.Aposcore.inference_dataset import read_sdf_file
 
 
@@ -138,6 +138,298 @@ class ResultsProcessor:
                     logger.warning(f"Failed to remove log file {log_file}: {str(e)}")
 
         return top_k_sdf
+
+    def process_screening_results(
+        self,
+        scores: np.ndarray,
+        docked_ligands: List[str],
+        pocket_files: List[str],
+        protein_ids: List[str],
+        output_dir: str,
+        output_scores_file: Optional[str] = None,
+        rank_by: str = "aposcore",
+        save_best_structures: bool = True,
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Process scores for screening mode and save best structures.
+
+        Args:
+            scores: Array of scores from get_mdn_score
+            docked_ligands: List of paths to docked ligand files
+            pocket_files: List of paths to protein pocket files used for docking
+            protein_ids: List of protein IDs
+            output_dir: Output directory for results
+            output_scores_file: Path to save scores (default: None)
+            rank_by: Which score to use for ranking (default: "aposcore")
+                Options: "aposcore", "gnina_affinity", "gnina_cnn_score", "gnina_cnn_affinity"
+            save_best_structures: Whether to save the best structures (default: True)
+
+        Returns:
+            Dictionary mapping protein IDs to their best scores
+        """
+        logger.info(f"Processing {len(scores)} scores from screening")
+
+        # Dictionary to store best scores for each protein
+        best_scores = {}
+        # Dictionary to store best structures for each protein
+        best_structures = {}
+
+        # Process all scores at once - map scores to proteins and track best structures
+        score_index = 0
+        for i, (sdf_file, pocket_file) in enumerate(zip(docked_ligands, pocket_files)):
+            # Extract protein ID
+            protein_id = (
+                protein_ids[i]
+                if i < len(protein_ids)
+                else os.path.basename(os.path.dirname(sdf_file))
+            )
+
+            # Read molecules only once
+            mols, _ = read_sdf_file(sdf_file, save_mols=True)
+            if mols is None or len(mols) == 0:
+                logger.warning(f"No valid molecules found in {sdf_file}")
+                continue
+
+            num_mols = len(mols)
+
+            # Get scores for this file
+            if score_index + num_mols <= len(scores):
+                file_scores = scores[score_index : score_index + num_mols]
+                score_index += num_mols
+            else:
+                # Handle case where we don't have enough scores
+                remaining = len(scores) - score_index
+                file_scores = scores[score_index:] if remaining > 0 else []
+                score_index = len(scores)
+                logger.warning(
+                    f"Not enough scores for file {sdf_file}: needed {num_mols}, got {len(file_scores)}"
+                )
+
+            if len(file_scores) == 0:
+                continue
+
+            # Get best ApoScore
+            best_aposcore_idx = np.argmax(file_scores)
+            best_aposcore = float(file_scores[best_aposcore_idx])
+
+            # Initialize score dictionary for this protein
+            if protein_id not in best_scores:
+                best_scores[protein_id] = {
+                    "aposcore": -float("inf"),
+                    "gnina_affinity": float("inf"),
+                    "gnina_cnn_score": -float("inf"),
+                    "gnina_cnn_affinity": float("inf"),
+                }
+
+            # Extract GNINA scores
+            gnina_scores = extract_gnina_scores_from_file(sdf_file)
+
+            if gnina_scores:
+                # Find best scores for each GNINA metric
+                best_affinity = min(
+                    [s["affinity"] for s in gnina_scores], default=float("inf")
+                )
+                best_cnn_score = max(
+                    [s["cnn_score"] for s in gnina_scores], default=-float("inf")
+                )
+                best_cnn_affinity = min(
+                    [s["cnn_affinity"] for s in gnina_scores], default=float("inf")
+                )
+
+                # Update if better than current best
+                if best_aposcore > best_scores[protein_id]["aposcore"]:
+                    best_scores[protein_id]["aposcore"] = best_aposcore
+                    best_scores[protein_id]["gnina_affinity"] = best_affinity
+                    best_scores[protein_id]["gnina_cnn_score"] = best_cnn_score
+                    best_scores[protein_id]["gnina_cnn_affinity"] = best_cnn_affinity
+
+                    # Track best structure
+                    best_structures[protein_id] = {
+                        "protein": pocket_file,
+                        "ligand": sdf_file,
+                    }
+            else:
+                # If no GNINA scores, just update based on ApoScore
+                if best_aposcore > best_scores[protein_id]["aposcore"]:
+                    best_scores[protein_id]["aposcore"] = best_aposcore
+                    best_structures[protein_id] = {
+                        "protein": pocket_file,
+                        "ligand": sdf_file,
+                    }
+
+        # Save results to CSV file if requested
+        sorted_items = None
+        if output_scores_file:
+            sorted_items = self._save_scores_to_csv(
+                best_scores, output_dir, output_scores_file, rank_by
+            )
+
+        # Save best structures if requested
+        if save_best_structures and best_scores:
+            self._save_best_structures(
+                best_scores, best_structures, output_dir, rank_by
+            )
+
+        return best_scores
+
+    def _save_scores_to_csv(
+        self,
+        best_scores: Dict[str, Dict[str, float]],
+        output_dir: str,
+        output_scores_file: str,
+        rank_by: str = "aposcore",
+    ) -> List[Tuple[str, Dict[str, float]]]:
+        """
+        Save scores to a CSV file and return sorted items.
+
+        Args:
+            best_scores: Dictionary mapping protein IDs to score dictionaries
+            output_dir: Output directory for results
+            output_scores_file: Filename for scores CSV
+            rank_by: Which score to use for ranking
+
+        Returns:
+            List of sorted (protein_id, score_dict) tuples
+        """
+        # Set default output filename if none provided
+        if not output_scores_file.endswith(".csv"):
+            output_scores_file = "pocket_scores.csv"
+        scores_path = os.path.join(output_dir, output_scores_file)
+
+        # Determine sort order based on rank_by parameter
+        if rank_by == "aposcore":
+            reverse = True  # Higher is better
+            sort_key = lambda x: x[1].get("aposcore", -float("inf"))
+        elif rank_by == "gnina_affinity":
+            reverse = False  # Lower is better
+            sort_key = lambda x: x[1].get("gnina_affinity", float("inf"))
+        elif rank_by == "gnina_cnn_score":
+            reverse = True  # Higher is better
+            sort_key = lambda x: x[1].get("gnina_cnn_score", -float("inf"))
+        elif rank_by == "gnina_cnn_affinity":
+            reverse = False  # Lower is better
+            sort_key = lambda x: x[1].get("gnina_cnn_affinity", float("inf"))
+        else:
+            # Default to ApoScore if invalid rank_by
+            logger.warning(
+                f"Invalid rank_by parameter: {rank_by}. Using aposcore instead."
+            )
+            rank_by = "aposcore"
+            reverse = True
+            sort_key = lambda x: x[1].get("aposcore", -float("inf"))
+
+        # Sort the results
+        sorted_items = sorted(best_scores.items(), key=sort_key, reverse=reverse)
+
+        with open(scores_path, "w") as f:
+            # Write header with all score types
+            f.write(
+                "Rank,Protein_ID,ApoScore,GNINA_Affinity,GNINA_CNN_Score,GNINA_CNN_Affinity\n"
+            )
+
+            # Write sorted results with rank
+            for rank, (protein_id, score_dict) in enumerate(sorted_items, 1):
+                # Get values with defaults for missing scores
+                aposcore = score_dict.get("aposcore", "N/A")
+                gnina_affinity = score_dict.get("gnina_affinity", "N/A")
+                gnina_cnn_score = score_dict.get("gnina_cnn_score", "N/A")
+                gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
+
+                # Write the scores
+                f.write(
+                    f"{rank},{protein_id},{aposcore},{gnina_affinity},{gnina_cnn_score},{gnina_cnn_affinity}\n"
+                )
+
+        logger.info(f"Saved best scores to {scores_path} (ranked by {rank_by})")
+
+        return sorted_items
+
+    def _save_best_structures(
+        self,
+        best_scores: Dict[str, Dict[str, float]],
+        best_structures: Dict[str, Dict[str, str]],
+        output_dir: str,
+        rank_by: str,
+    ) -> None:
+        """
+        Save best structures to output directory.
+
+        This helper method handles saving the best structures to a permanent location.
+        For each base protein ID, it selects the best variant based on the ranking criterion.
+
+        Args:
+            best_scores: Dictionary of best scores
+            best_structures: Dictionary of best structures (protein and ligand paths)
+            output_dir: Output directory for results
+            rank_by: Which score to use for ranking
+        """
+        import shutil
+
+        # Create a sort key function based on the rank_by parameter
+        if rank_by == "aposcore":
+            # Higher ApoScore is better
+            sort_key = lambda x: best_scores[x].get("aposcore", -float("inf"))
+        elif rank_by == "gnina_affinity":
+            # Lower affinity is better
+            sort_key = lambda x: best_scores[x].get("gnina_affinity", float("inf")) * -1
+        elif rank_by == "gnina_cnn_score":
+            # Higher CNN score is better
+            sort_key = lambda x: best_scores[x].get("gnina_cnn_score", -float("inf"))
+        elif rank_by == "gnina_cnn_affinity":
+            # Lower CNN affinity is better
+            sort_key = (
+                lambda x: best_scores[x].get("gnina_cnn_affinity", float("inf")) * -1
+            )
+        else:
+            # Default to ApoScore
+            sort_key = lambda x: best_scores[x].get("aposcore", -float("inf"))
+
+        # Extract base proteins (without _pack_ suffix) and keep only best variant
+        base_protein_ids = {}
+        for protein_id in best_structures.keys():
+            # Extract base ID (removing _pack_XX suffix if present)
+            base_id = (
+                protein_id.split("_pack_")[0] if "_pack_" in protein_id else protein_id
+            )
+
+            # For each base ID, keep track of its best variant
+            current_variant = base_protein_ids.get(base_id)
+            if current_variant is None or sort_key(protein_id) > sort_key(
+                current_variant
+            ):
+                base_protein_ids[base_id] = protein_id
+
+        logger.info(
+            f"Saving best variant for each base protein ({len(base_protein_ids)} proteins)"
+        )
+
+        # Save best structures for each base protein
+        for base_id, best_variant_id in base_protein_ids.items():
+            best_structure = best_structures[best_variant_id]
+            protein_dir = os.path.join(output_dir, base_id)
+
+            # Ensure directory exists
+            os.makedirs(protein_dir, exist_ok=True)
+
+            # Create best structure filenames
+            best_protein_filename = f"{base_id}_best_{rank_by}_protein.pdb"
+            best_ligand_filename = f"{base_id}_best_{rank_by}_ligand.sdf"
+
+            # Copy the best structures
+            try:
+                shutil.copy2(
+                    best_structure["protein"],
+                    os.path.join(protein_dir, best_protein_filename),
+                )
+                shutil.copy2(
+                    best_structure["ligand"],
+                    os.path.join(protein_dir, best_ligand_filename),
+                )
+                logger.info(f"Saved best structures for {base_id}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to save best structures for {base_id}: {str(e)}"
+                )
 
     def process(self, scored_poses: List[tuple], output_dir: str) -> List[str]:
         """

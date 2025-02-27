@@ -7,7 +7,7 @@ from apodock.utils import ensure_dir, ApoDockError, logger
 
 
 class DockingEngine:
-    """Interface to external docking programs like gnina or smina."""
+    """Interface to external docking program (GNINA)."""
 
     def __init__(self, config: DockingEngineConfig, random_seed: int = 42):
         """
@@ -18,7 +18,6 @@ class DockingEngine:
             random_seed: Random seed for reproducibility (default: 42)
         """
         self.config = config
-        self.program = config.program
         self.gnina_path = config.gnina_path
         self.random_seed = random_seed
 
@@ -37,7 +36,7 @@ class DockingEngine:
                 "Box size not defined in config, will use reference ligand for box definition"
             )
 
-        logger.info(f"Docking engine initialized with random seed: {random_seed}")
+        logger.info(f"GNINA docking engine initialized with random seed: {random_seed}")
 
     def dock(
         self,
@@ -48,7 +47,7 @@ class DockingEngine:
         use_packing: bool = True,
     ) -> str:
         """
-        Dock a ligand to a protein using the configured docking program.
+        Dock a ligand to a protein using GNINA.
 
         Args:
             ligand: Path to the ligand file
@@ -70,21 +69,14 @@ class DockingEngine:
         protein_out_dir = os.path.join(out_dir, protein_id)
         ensure_dir(protein_out_dir)
 
-        # Determine output file path based on settings
-        if self.program == "smina.static":
-            program_name = "smina"
-        else:
-            program_name = self.program
-
+        # Determine output file path based on packing
         if use_packing:
             output_path = os.path.join(
                 protein_out_dir,
-                f"{protein_id.split('.')[0]}_{program_name}_dock_{ligand_id}.sdf",
+                f"{protein_id.split('.')[0]}_gnina_dock_{ligand_id}.sdf",
             )
         else:
-            output_path = os.path.join(
-                protein_out_dir, f"{program_name}_dock_{ligand_id}.sdf"
-            )
+            output_path = os.path.join(protein_out_dir, f"gnina_dock_{ligand_id}.sdf")
 
         # Create a log file path to save the docking output
         log_path = os.path.join(
@@ -173,39 +165,23 @@ class DockingEngine:
             # Get the reference ligand for this ligand/protein pair
             ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
 
+            # Ensure a valid reference ligand is provided
+            if ref_lig is None or not os.path.exists(ref_lig):
+                raise ApoDockError(
+                    f"Missing or invalid reference ligand for docking ligand {ligand}. "
+                    f"Reference ligand is required to define the binding site."
+                )
+
             ligand_poses = []
             ligand_proteins = []  # Store packed proteins used for this ligand
             # Dock the ligand to each packed protein in the corresponding cluster
             for packed_protein in cluster_packs_list[i]:
                 try:
-                    # Use the original reference ligand from ref_lig_list instead of searching in the directory
-                    # If no reference ligand provided, try to find one in the protein directory as fallback
-                    if ref_lig is None or not os.path.exists(ref_lig):
-                        # Fallback to searching in the protein directory
-                        protein_dir = os.path.dirname(packed_protein)
-                        ref_lig_candidates = [
-                            f
-                            for f in os.listdir(protein_dir)
-                            if f.endswith(".mol2") or f.endswith(".sdf")
-                        ]
-
-                        local_ref_lig = None
-                        if ref_lig_candidates:
-                            local_ref_lig = os.path.join(
-                                protein_dir, ref_lig_candidates[0]
-                            )
-                            logger.info(
-                                f"Found local reference ligand: {local_ref_lig}"
-                            )
-                    else:
-                        local_ref_lig = ref_lig
-                        logger.info(f"Using provided reference ligand: {local_ref_lig}")
-
-                    # Dock using the packed protein
+                    # Dock using the packed protein with the provided reference ligand
                     docked_pose = self.dock(
                         ligand=ligand,
                         protein=packed_protein,
-                        ref_lig=local_ref_lig,
+                        ref_lig=ref_lig,
                         out_dir=out_dir,
                         use_packing=True,
                     )
@@ -252,21 +228,12 @@ class DockingEngine:
                 # Use the original reference ligand if available
                 ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
 
-                # If no reference ligand provided or it doesn't exist, look in the pocket directory as fallback
+                # Ensure a valid reference ligand is provided
                 if ref_lig is None or not os.path.exists(ref_lig):
-                    # Fallback to searching in the pocket directory
-                    pocket_dir = os.path.dirname(pocket)
-                    ref_lig_candidates = [
-                        f
-                        for f in os.listdir(pocket_dir)
-                        if f.endswith(".mol2") or f.endswith(".sdf")
-                    ]
-
-                    if ref_lig_candidates:
-                        ref_lig = os.path.join(pocket_dir, ref_lig_candidates[0])
-                        logger.info(f"Found local reference ligand: {ref_lig}")
-                else:
-                    logger.info(f"Using provided reference ligand: {ref_lig}")
+                    raise ApoDockError(
+                        f"Missing or invalid reference ligand for docking ligand {ligand} with pocket {pocket}. "
+                        f"Reference ligand is required to define the binding site."
+                    )
 
                 # Dock the ligand to the pocket
                 docked_pose = self.dock(

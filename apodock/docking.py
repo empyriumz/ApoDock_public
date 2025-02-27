@@ -96,94 +96,78 @@ def main():
         logger.info(f"Output directory: {config.output_dir}")
         logger.info(f"Using random seed: {config.random_seed}")
 
-        # Check if we're running in screening mode
-        if config.screening_mode:
-            logger.info("Running in pocket screening mode")
+        # Create pipeline and run in screening mode
+        pipeline = DockingPipeline(config)
+        best_scores = pipeline.run_screening(
+            [ligand_file],
+            [protein_file],
+            [ref_lig_file],
+            save_poses=config.save_poses,
+            output_scores_file=config.output_scores_file,
+            rank_by=config.rank_by,
+        )
 
-            # Create and run pipeline in screening mode
-            pipeline = DockingPipeline(config)
-            best_scores = pipeline.run_pocket_screening(
-                [ligand_file],
-                [protein_file],
-                [ref_lig_file],
-                save_poses=config.save_poses,
-                output_scores_file=config.output_scores_file,
-                rank_by=config.rank_by,
-            )
+        # Print the best score for each protein
+        logger.info("Docking results:")
 
-            # Print the best score for each protein
-            logger.info("Pocket screening results:")
+        # Sort the results based on the selected ranking score
+        sorted_results = []
+        for protein_id, score_dict in best_scores.items():
+            # Get the ranking score with appropriate default
+            if config.rank_by == "aposcore":
+                rank_score = score_dict.get("aposcore", -float("inf"))
+                reverse = True  # Higher is better
+            elif config.rank_by == "gnina_affinity":
+                rank_score = score_dict.get("gnina_affinity", float("inf"))
+                reverse = False  # Lower is better
+            elif config.rank_by == "gnina_cnn_score":
+                rank_score = score_dict.get("gnina_cnn_score", -float("inf"))
+                reverse = True  # Higher is better
+            elif config.rank_by == "gnina_cnn_affinity":
+                rank_score = score_dict.get("gnina_cnn_affinity", float("inf"))
+                reverse = False  # Lower is better
 
-            # Sort the results based on the selected ranking score
-            sorted_results = []
-            for protein_id, score_dict in best_scores.items():
-                # Get the ranking score with appropriate default
-                if config.rank_by == "aposcore":
-                    rank_score = score_dict.get("aposcore", -float("inf"))
-                    reverse = True  # Higher is better
-                elif config.rank_by == "gnina_affinity":
-                    rank_score = score_dict.get("gnina_affinity", float("inf"))
-                    reverse = False  # Lower is better
-                elif config.rank_by == "gnina_cnn_score":
-                    rank_score = score_dict.get("gnina_cnn_score", -float("inf"))
-                    reverse = True  # Higher is better
-                elif config.rank_by == "gnina_cnn_affinity":
-                    rank_score = score_dict.get("gnina_cnn_affinity", float("inf"))
-                    reverse = False  # Lower is better
+            # Skip entries with N/A for the ranking score
+            if rank_score in [float("inf"), -float("inf")]:
+                continue
 
-                # Skip entries with N/A for the ranking score
-                if rank_score in [float("inf"), -float("inf")]:
-                    continue
+            sorted_results.append((protein_id, score_dict, rank_score))
 
-                sorted_results.append((protein_id, score_dict, rank_score))
+        # Sort the results
+        sorted_results.sort(key=lambda x: x[2], reverse=reverse)
 
-            # Sort the results
-            sorted_results.sort(key=lambda x: x[2], reverse=reverse)
+        # Display the sorted results
+        logger.info(
+            f"Results ranked by {config.rank_by} ({'higher is better' if reverse else 'lower is better'}):"
+        )
+        for rank, (protein_id, score_dict, rank_score) in enumerate(sorted_results, 1):
+            aposcore = score_dict.get("aposcore", "N/A")
+            gnina_affinity = score_dict.get("gnina_affinity", "N/A")
+            gnina_cnn_score = score_dict.get("gnina_cnn_score", "N/A")
+            gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
 
-            # Display the sorted results
-            logger.info(
-                f"Results ranked by {config.rank_by} ({'higher is better' if reverse else 'lower is better'}):"
-            )
-            for rank, (protein_id, score_dict, rank_score) in enumerate(
-                sorted_results, 1
-            ):
-                aposcore = score_dict.get("aposcore", "N/A")
-                gnina_affinity = score_dict.get("gnina_affinity", "N/A")
-                gnina_cnn_score = score_dict.get("gnina_cnn_score", "N/A")
-                gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
+            logger.info(f"  Rank {rank}: {protein_id}")
+            logger.info(f"    ApoScore: {aposcore}")
+            logger.info(f"    GNINA Affinity: {gnina_affinity}")
+            logger.info(f"    GNINA CNN Score: {gnina_cnn_score}")
+            logger.info(f"    GNINA CNN Affinity: {gnina_cnn_affinity}")
 
-                logger.info(f"  Rank {rank}: {protein_id}")
-                logger.info(f"    ApoScore: {aposcore}")
-                logger.info(f"    GNINA Affinity: {gnina_affinity}")
-                logger.info(f"    GNINA CNN Score: {gnina_cnn_score}")
-                logger.info(f"    GNINA CNN Affinity: {gnina_cnn_affinity}")
+            # Log the location of best structure files
+            protein_dir = os.path.join(config.output_dir, protein_id)
+            best_protein_filename = f"{protein_id}_best_{config.rank_by}_protein.pdb"
+            best_ligand_filename = f"{protein_id}_best_{config.rank_by}_ligand.sdf"
 
-                # Log the location of best structure files
-                protein_dir = os.path.join(config.output_dir, protein_id)
-                best_protein_filename = (
-                    f"{protein_id}_best_{config.rank_by}_protein.pdb"
+            if os.path.exists(os.path.join(protein_dir, best_protein_filename)):
+                logger.info(
+                    f"    Best protein structure: {protein_dir}/{best_protein_filename}"
                 )
-                best_ligand_filename = f"{protein_id}_best_{config.rank_by}_ligand.sdf"
+                logger.info(
+                    f"    Best ligand structure: {protein_dir}/{best_ligand_filename}"
+                )
 
-                if os.path.exists(os.path.join(protein_dir, best_protein_filename)):
-                    logger.info(
-                        f"    Best protein structure: {protein_dir}/{best_protein_filename}"
-                    )
-                    logger.info(
-                        f"    Best ligand structure: {protein_dir}/{best_ligand_filename}"
-                    )
-
-            logger.info(
-                f"Screening completed successfully. Results saved to: {config.output_dir}/{config.output_scores_file}"
-            )
-        else:
-            # Create and run pipeline in normal mode
-            pipeline = DockingPipeline(config)
-            results = pipeline.run([ligand_file], [protein_file], [ref_lig_file])
-
-            logger.info(
-                f"Docking completed successfully. Results saved to: {', '.join(results)}"
-            )
+        logger.info(
+            f"Docking completed successfully. Results saved to: {config.output_dir}/{config.output_scores_file if config.output_scores_file else 'output directory'}"
+        )
 
         return 0
 

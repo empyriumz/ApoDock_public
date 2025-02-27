@@ -9,6 +9,7 @@ setup(
         "pandas",
         "torch",
         "torch-geometric",
+        "biopython",
     ],
     author="Ding Luo, Xiaoyang Qu, Dexin Lu, Yiqiu Wang, Lina Dong, Binju Wang and Xin Dai",
     description="ApoDock is a modular docking paradigm that combines machine learning-driven conditional side-chain packing based on protein backbone and ligand information with traditional sampling methods to ensure physically realistic poses.",

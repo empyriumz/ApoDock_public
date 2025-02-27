@@ -12,7 +12,6 @@ pocket_distance: 10.0
 random_seed: 42  # Random seed for reproducibility
 
 # Screening options (previously command line arguments)
-screening_mode: true  # Run in pocket screening mode (outputs scores only, no pose files)
 output_scores_file: pocket_scores.csv  # File to save pocket scores to (in screening mode)
 save_poses: false  # Save pose files even in screening mode
 rank_by: aposcore  # Which score to use for ranking pocket designs (options: aposcore, gnina_affinity, gnina_cnn_score, gnina_cnn_affinity)
@@ -49,8 +48,6 @@ aposcore:
 
 # Docking engine settings
 docking:
-  # Options: 'gnina' or 'smina.static'
-  program: gnina
   num_modes: 40
   exhaustiveness: 32
   autobox_add: 6.0

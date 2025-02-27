@@ -41,15 +41,14 @@ class AposcoreConfig(ModelConfig):
 
 @dataclass
 class DockingEngineConfig:
-    """Configuration for docking programs."""
+    """Configuration for GNINA docking program."""
 
-    program: str = "gnina"
     num_modes: int = 40
     exhaustiveness: int = 32
     autobox_add: float = 6.0
     box_center: Optional[List[float]] = None
     box_size: Optional[List[float]] = None
-    gnina_path: str = "/host/gnina"  # Default path, should be configurable
+    gnina_path: str = "/host/gnina"  # Path to GNINA executable
 
 
 @dataclass
@@ -156,8 +155,6 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
 
     if "docking" in config_dict:
         docking_dict = config_dict["docking"]
-        if "program" in docking_dict:
-            docking_config.program = docking_dict["program"]
         if "num_modes" in docking_dict:
             docking_config.num_modes = docking_dict["num_modes"]
         if "exhaustiveness" in docking_dict:

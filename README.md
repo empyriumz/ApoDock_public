@@ -77,6 +77,13 @@ To view the loaded configuration without running the pipeline:
 python -m apodock.docking --config config.yaml --show_config
 ```
 
+### Protein Structure Requirements
+
+ApoDock performs automatic validation of protein structure completeness:
+
+- When `use_packing: true` (default): Both complete proteins and backbone-only structures are accepted. For backbone-only structures, the packing algorithm will generate side chains.
+- When `use_packing: false`: Only complete protein structures with side chains are accepted. The pipeline will raise an error if a backbone-only structure is detected to prevent meaningless docking results.
+
 ### Pocket Screening Mode
 
 For pocket design screening, create a configuration with screening options:

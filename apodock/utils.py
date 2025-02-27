@@ -1,12 +1,11 @@
 import os
 import logging
 from typing import Optional, Any, Union, List, Dict
-import pandas as pd
 from rdkit import Chem
 import torch
 import random
 import numpy as np
-import re
+
 
 # Configure logger
 logging.basicConfig(
@@ -61,52 +60,6 @@ def ensure_dir(directory: str) -> None:
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
         logger.debug(f"Created directory: {directory}")
-
-
-def get_data_from_csv(csv_file: str) -> tuple:
-    """
-    Read CSV file containing paths for ligands, proteins, and reference ligands.
-
-    Args:
-        csv_file: Path to the CSV file
-
-    Returns:
-        Tuple of (ligand_list, protein_list, ref_lig_list)
-
-    Raises:
-        ApoDockError: If counts mismatch or if error occurs
-    """
-    try:
-        df = pd.read_csv(csv_file)
-        if "ligand" not in df.columns or "protein" not in df.columns:
-            raise ApoDockError(
-                f"CSV file must contain 'ligand' and 'protein' columns: {csv_file}"
-            )
-
-        ligand_list = df["ligand"].tolist()
-        protein_list = df["protein"].tolist()
-
-        # Reference ligand is optional
-        if "ref_lig" in df.columns:
-            ref_lig_list = df["ref_lig"].tolist()
-        else:
-            ref_lig_list = [None] * len(ligand_list)
-
-        # Check if counts match
-        if len(ligand_list) != len(protein_list) or len(ligand_list) != len(
-            ref_lig_list
-        ):
-            raise ApoDockError(
-                f"Mismatched counts in CSV file: ligands ({len(ligand_list)}), "
-                f"proteins ({len(protein_list)}), ref_ligs ({len(ref_lig_list)})"
-            )
-
-        return ligand_list, protein_list, ref_lig_list
-
-    except Exception as e:
-        if isinstance(e, ApoDockError):
-            raise
-        raise ApoDockError(f"Error reading CSV file {csv_file}: {str(e)}")
 
 
 def read_molecule(mol_path: str) -> Optional[Chem.Mol]:
