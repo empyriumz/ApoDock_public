@@ -52,7 +52,6 @@ def main():
         if args.show_config:
             logger.info("Loaded configuration:")
             logger.info(f"  Output directory: {config.output_dir}")
-            logger.info(f"  Use packing: {config.use_packing}")
             logger.info(f"  Top K poses: {config.top_k}")
             logger.info(f"  Pocket distance: {config.pocket_distance}")
             logger.info(f"  Random seed: {config.random_seed}")
@@ -91,7 +90,7 @@ def main():
 
         # Log configuration
         logger.info(
-            f"Running ApoDock with {'packing' if config.use_packing else 'direct docking'}"
+            "Running ApoDock with automatic detection of backbone-only structures"
         )
         logger.info(f"Output directory: {config.output_dir}")
         logger.info(f"Using random seed: {config.random_seed}")

@@ -69,7 +69,6 @@ class PipelineConfig:
     aposcore_config: AposcoreConfig = field(default_factory=AposcoreConfig)
     docking_config: DockingEngineConfig = field(default_factory=DockingEngineConfig)
     output_dir: str = "./docking_results"
-    use_packing: bool = True
     top_k: int = 40
     pocket_distance: float = 10.0  # Distance in Angstroms for pocket extraction
     random_seed: int = 42  # Random seed for reproducibility
@@ -82,6 +81,10 @@ class PipelineConfig:
     )
     save_poses: bool = False  # Save pose files even in screening mode
     rank_by: str = "aposcore"  # Which score to use for ranking pocket designs
+    # Options for backbone-only inputs
+    skip_pocket_extraction: bool = (
+        False  # Skip pocket extraction when already providing a pocket
+    )
 
 
 def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
@@ -180,7 +183,11 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
     if "output_dir" in config_dict:
         pipeline_config.output_dir = config_dict["output_dir"]
     if "use_packing" in config_dict:
-        pipeline_config.use_packing = config_dict["use_packing"]
+        # Deprecated parameter, warn user
+        logger.warning(
+            "The 'use_packing' parameter is deprecated and will be ignored. "
+            "Packing is now automatically performed for backbone-only structures."
+        )
     if "top_k" in config_dict:
         pipeline_config.top_k = config_dict["top_k"]
     if "pocket_distance" in config_dict:
@@ -209,5 +216,15 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
             logger.warning(
                 f"Invalid rank_by value: {config_dict['rank_by']}. Using default: aposcore"
             )
+
+    # Set new options for backbone-only inputs
+    if "skip_pocket_extraction" in config_dict:
+        pipeline_config.skip_pocket_extraction = config_dict["skip_pocket_extraction"]
+    if "input_is_backbone_only" in config_dict:
+        # Inform user this parameter is now automatically handled
+        logger.warning(
+            "The 'input_is_backbone_only' parameter has been removed. "
+            "The pipeline now automatically detects backbone-only structures."
+        )
 
     return pipeline_config

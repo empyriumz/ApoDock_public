@@ -48,11 +48,10 @@ class DockingPipeline:
 
         logger.info("Initializing machine learning models...")
 
-        # Initialize Pack model if needed
-        if config.use_packing:
-            logger.info(f"Creating Pack model for side-chain packing...")
-            self.pack_model = Pack(recycle_strategy="sample")
-            # Note: We don't load weights here - they'll be loaded during sc_pack
+        # Always initialize Pack model (will be used for backbone-only structures)
+        logger.info(f"Creating Pack model for side-chain packing...")
+        self.pack_model = Pack(recycle_strategy="sample")
+        # Note: We don't load weights here - they'll be loaded during sc_pack
 
         # Always initialize Aposcore model
         logger.info(f"Creating Aposcore model for pose scoring...")
@@ -69,75 +68,70 @@ class DockingPipeline:
         )
         # Note: We don't load weights here - they'll be loaded during get_mdn_score
 
-    def validate_protein_structure(self, protein_files: List[str]) -> None:
+    def validate_protein_structure(self, protein_files: List[str]) -> bool:
         """
-        Validate that protein files contain side chains when use_packing=False.
+        Validate protein structures and detect if they're backbone-only.
 
-        This function checks if proteins have more atoms than would be expected
-        for backbone-only structures. A backbone-only structure would typically have
-        only N, CA, C, and O atoms per residue.
+        This method determines if any protein structure contains side chain atoms.
+        A structure is considered backbone-only if it has no side chain atoms.
 
         Args:
             protein_files: List of paths to protein files to validate
 
-        Raises:
-            ApoDockError: If use_packing=False and proteins appear to be backbone-only
+        Returns:
+            bool: True if the structure is backbone-only, False otherwise
         """
-        if self.config.use_packing:
-            # Skip validation if packing is enabled
-            return
-
         parser = PDBParser(QUIET=True)
+
+        # Assume backbone-only until we find side chains
+        is_backbone_only = True
 
         for protein_file in protein_files:
             try:
                 # Parse the protein structure
                 structure = parser.get_structure("protein", protein_file)
 
-                # Count total residues and residues with side chains
-                total_residues = 0
-                residues_with_side_chains = 0
-
+                # Check for any side chain atoms in any residue
                 for model in structure:
                     for chain in model:
                         for residue in chain:
-                            total_residues += 1
+                            # Get all atom names in this residue
+                            atom_names = {atom.name for atom in residue}
 
-                            # Check if residue has more atoms than just backbone
-                            # Backbone atoms are typically N, CA, C, O
-                            atom_names = set(atom.name for atom in residue)
+                            # Backbone atoms are N, CA, C, O
                             backbone_atoms = {"N", "CA", "C", "O"}
 
-                            # If there are atoms beyond backbone atoms, it has side chains
-                            if len(atom_names - backbone_atoms) > 0:
-                                residues_with_side_chains += 1
-
-                # Calculate percentage of residues with side chains
-                if total_residues == 0:
-                    logger.warning(f"No residues found in protein file: {protein_file}")
-                    continue
-
-                side_chain_percentage = (
-                    residues_with_side_chains / total_residues
-                ) * 100
-
-                # If less than 10% of residues have side chains, consider it a backbone-only structure
-                if side_chain_percentage < 10:
-                    protein_name = os.path.basename(protein_file)
-                    raise ApoDockError(
-                        f"Protein '{protein_name}' appears to be a backbone-only structure. "
-                        f"When use_packing=False, proteins must include side chains. "
-                        f"Either enable packing with use_packing=True or provide a complete protein structure."
-                    )
+                            # If there are any atoms that aren't in the backbone set
+                            if atom_names - backbone_atoms:
+                                # Found side chain atoms
+                                is_backbone_only = False
+                                logger.info(
+                                    "Input structures contain side chains (full-atom models)."
+                                )
+                                return is_backbone_only  # Early exit, no need to check further
 
             except Exception as e:
-                if isinstance(e, ApoDockError):
-                    # Re-raise ApoDockError exceptions
-                    raise
-                # Log other exceptions but continue validation
                 logger.warning(
                     f"Error validating protein structure {protein_file}: {str(e)}"
                 )
+                is_backbone_only = False  # Be conservative on error
+                return is_backbone_only
+
+        # If we get here, no side chains were found
+        logger.info(
+            "Detected backbone-only input structures. Side chains will be packed."
+        )
+
+        # For backbone-only structures, suggest skipping pocket extraction
+        if (
+            not hasattr(self.config, "skip_pocket_extraction")
+            or not self.config.skip_pocket_extraction
+        ):
+            logger.info(
+                "For backbone-only inputs, consider setting skip_pocket_extraction=True."
+            )
+
+        return is_backbone_only
 
     def run_screening(
         self,
@@ -173,8 +167,8 @@ class DockingPipeline:
         temp_dir = None  # Track temporary directory if created
 
         try:
-            # Validate protein structures if not using packing
-            self.validate_protein_structure(protein_list)
+            # Validate protein structures to detect backbone-only inputs
+            is_backbone_only = self.validate_protein_structure(protein_list)
 
             # Extract protein IDs for directory organization
             protein_ids = [
@@ -185,15 +179,41 @@ class DockingPipeline:
             os.makedirs(config.output_dir, exist_ok=True)
 
             # Step 1: Extract pockets from proteins using reference ligands
-            logger.info("Extracting pockets from proteins...")
-            pocket_list = self.pocket_extractor.extract_pockets(
-                protein_list, ref_lig_list, config.output_dir
-            )
+            # Check if we should skip pocket extraction (for backbone-only pocket inputs)
+            if (
+                hasattr(config, "skip_pocket_extraction")
+                and config.skip_pocket_extraction
+            ):
+                logger.info(
+                    "Skipping pocket extraction as requested (using input proteins as pockets)..."
+                )
+                pocket_list = (
+                    protein_list.copy()
+                )  # Use the input proteins directly as pockets
+            else:
+                logger.info("Extracting pockets from proteins...")
+                pocket_list = self.pocket_extractor.extract_pockets(
+                    protein_list, ref_lig_list, config.output_dir
+                )
 
-            # Step 2: Decide on strategy - packing or direct docking
-            if config.use_packing:
-                # With packing - first generate packed variants
-                logger.info("Generating packed protein variants...")
+            # Determine working directory - use temp dir if not saving poses
+            if not save_poses:
+                temp_dir = tempfile.mkdtemp(prefix="docking_", dir=config.output_dir)
+                working_dir = temp_dir
+                cleanup_intermediates = True
+            else:
+                working_dir = config.output_dir
+                cleanup_intermediates = False
+
+            # Step 2: Handle docking strategy based on input structure type
+            docked_ligands = []
+            scoring_pocket_files = []
+
+            if is_backbone_only:
+                # For backbone-only structures, we need to pack side chains
+                logger.info(
+                    "Generating packed protein variants for backbone-only structures..."
+                )
 
                 # Create a PackingConfig object from our existing config parameters
                 packing_config = PackingConfig(
@@ -204,17 +224,6 @@ class DockingPipeline:
                     resample=True,  # Default value
                     apo2holo=False,  # Explicitly set to False
                 )
-
-                # Determine working directory - use temp dir if not saving poses
-                if not save_poses:
-                    temp_dir = tempfile.mkdtemp(
-                        prefix="packing_", dir=config.output_dir
-                    )
-                    working_dir = temp_dir
-                    cleanup_intermediates = True
-                else:
-                    working_dir = config.output_dir
-                    cleanup_intermediates = False
 
                 # Run packing with appropriate directory settings
                 cluster_packs_list = sc_pack(
@@ -232,32 +241,35 @@ class DockingPipeline:
                     cleanup_intermediates=cleanup_intermediates,
                 )
 
-                # Step 3: Dock ligands to packed proteins
+                # Dock to packed protein variants
                 logger.info("Docking ligands to packed proteins...")
-                docking_results = self.docking_engine.dock_to_packed_proteins(
-                    ligand_list, cluster_packs_list, ref_lig_list, working_dir
+                docking_results = self.docking_engine.dock_ligands_to_proteins(
+                    ligand_list,
+                    cluster_packs_list,
+                    ref_lig_list,
+                    working_dir,
+                    is_packed=True,
                 )
                 docked_ligands, scoring_pocket_files = docking_results
 
-            else:
-                # Direct docking (no packing)
-                logger.info("Docking ligands to protein pockets...")
-                docked_ligands = self.docking_engine.dock_to_pockets(
-                    ligand_list, pocket_list, ref_lig_list, config.output_dir
+                logger.info(
+                    f"Successfully docked to {len(docked_ligands)} packed protein variants"
                 )
-                scoring_pocket_files = pocket_list
+            else:
+                # For full-atom structures, no packing is needed
+                logger.info(
+                    "Docking ligands to original protein structures with side chains..."
+                )
+                docking_results = self.docking_engine.dock_ligands_to_proteins(
+                    ligand_list, pocket_list, ref_lig_list, working_dir, is_packed=False
+                )
+                docked_ligands, scoring_pocket_files = docking_results
 
-                # For direct docking, ensure matching lengths between docked ligands and pockets
-                if len(docked_ligands) != len(scoring_pocket_files):
-                    logger.warning(
-                        f"Mismatch in direct docking: {len(docked_ligands)} docked ligands but {len(scoring_pocket_files)} pockets"
-                    )
-                    # Use the shortest list length to avoid index errors
-                    min_len = min(len(docked_ligands), len(scoring_pocket_files))
-                    docked_ligands = docked_ligands[:min_len]
-                    scoring_pocket_files = scoring_pocket_files[:min_len]
+                logger.info(
+                    f"Successfully docked to {len(docked_ligands)} protein structures"
+                )
 
-            # Step 4: Score docked poses - common for both paths
+            # Step 3: Score docked poses
             logger.info("Scoring docked poses...")
             scoring_config = ScoringConfig(
                 batch_size=64,  # Default batch size
@@ -276,7 +288,7 @@ class DockingPipeline:
                 random_seed=config.random_seed,
             )
 
-            # Step 5: Process scores and save best structures using results processor
+            # Step 4: Process scores and save best structures using results processor
             if isinstance(scores, np.ndarray):
                 best_scores = self.results_processor.process_screening_results(
                     scores,
@@ -327,8 +339,8 @@ class DockingPipeline:
                             f"Failed to remove temporary directory {temp_dir}: {str(e)}"
                         )
 
-                # Additional cleanup for intermediate packed files if using packing
-                if config.use_packing:
+                # Additional cleanup for intermediate packed files
+                if is_backbone_only:
                     self._cleanup_intermediate_files(
                         protein_list, config.output_dir, rank_by
                     )

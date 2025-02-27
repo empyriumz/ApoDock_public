@@ -135,116 +135,90 @@ class DockingEngine:
                     log_file.write(e.output)
             raise ApoDockError(f"Docking failed: {str(e)}")
 
-    def dock_to_packed_proteins(
+    def dock_ligands_to_proteins(
         self,
         ligand_list: List[str],
-        cluster_packs_list: List[List[str]],
+        protein_list: List[str],
         ref_lig_list: List[str],
         out_dir: str,
+        is_packed: bool = False,
     ) -> Tuple[List[str], List[str]]:
         """
-        Dock a list of ligands to their corresponding packed protein structures.
+        Dock a list of ligands to their corresponding protein structures.
+
+        This method handles both packed and original protein structures.
 
         Args:
             ligand_list: List of paths to ligand files
-            cluster_packs_list: List of lists of packed protein structures
+            protein_list: List of paths to protein structures
+                (can be flattened list of packed variants or list of original pockets)
             ref_lig_list: List of paths to reference ligand files
             out_dir: Output directory for docking results
+            is_packed: Whether the proteins are results of packing (affects naming)
 
         Returns:
             Tuple containing:
                 - List of paths to the docked pose files
-                - List of paths to the corresponding packed protein structures used for each pose
+                - List of paths to the corresponding protein structures used for each pose
         """
         docked_poses = []
-        corresponding_packed_proteins = (
-            []
-        )  # Track which packed protein was used for each pose
+        corresponding_proteins = []  # Track which protein was used for each pose
 
-        for i, ligand in enumerate(ligand_list):
-            # Get the reference ligand for this ligand/protein pair
-            ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
+        # Create a flat list if protein_list is a list of lists (from packed proteins)
+        if protein_list and isinstance(protein_list[0], list):
+            # Flatten the list of packed proteins
+            flat_protein_list = [p for sublist in protein_list for p in sublist]
+            # Create matching ligand and reference ligand lists
+            flat_ligand_list = []
+            flat_ref_lig_list = []
 
-            # Ensure a valid reference ligand is provided
-            if ref_lig is None or not os.path.exists(ref_lig):
-                raise ApoDockError(
-                    f"Missing or invalid reference ligand for docking ligand {ligand}. "
-                    f"Reference ligand is required to define the binding site."
-                )
-
-            ligand_poses = []
-            ligand_proteins = []  # Store packed proteins used for this ligand
-            # Dock the ligand to each packed protein in the corresponding cluster
-            for packed_protein in cluster_packs_list[i]:
-                try:
-                    # Dock using the packed protein with the provided reference ligand
-                    docked_pose = self.dock(
-                        ligand=ligand,
-                        protein=packed_protein,
-                        ref_lig=ref_lig,
-                        out_dir=out_dir,
-                        use_packing=True,
-                    )
-                    ligand_poses.append(docked_pose)
-                    ligand_proteins.append(
-                        packed_protein
-                    )  # Store the packed protein used
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to dock {ligand} to {packed_protein}: {str(e)}"
+            for i, packed_proteins in enumerate(protein_list):
+                for _ in packed_proteins:
+                    flat_ligand_list.append(ligand_list[i])
+                    flat_ref_lig_list.append(
+                        ref_lig_list[i] if i < len(ref_lig_list) else None
                     )
 
-            if ligand_poses:
-                docked_poses.extend(ligand_poses)
-                corresponding_packed_proteins.extend(ligand_proteins)
-            else:
-                logger.error(f"No successful docking for ligand {ligand}")
+            protein_list = flat_protein_list
+            ligand_list = flat_ligand_list
+            ref_lig_list = flat_ref_lig_list
 
-        return docked_poses, corresponding_packed_proteins
+        # Ensure protein and ligand lists have same length
+        if len(protein_list) != len(ligand_list):
+            logger.warning(
+                f"Mismatch in lengths: {len(ligand_list)} ligands but {len(protein_list)} proteins. "
+                f"Using the shorter list."
+            )
+            min_len = min(len(ligand_list), len(protein_list))
+            protein_list = protein_list[:min_len]
+            ligand_list = ligand_list[:min_len]
+            if len(ref_lig_list) > min_len:
+                ref_lig_list = ref_lig_list[:min_len]
 
-    def dock_to_pockets(
-        self,
-        ligand_list: List[str],
-        pocket_list: List[str],
-        ref_lig_list: List[str],
-        out_dir: str,
-    ) -> List[str]:
-        """
-        Dock a list of ligands to their corresponding protein pockets.
-
-        Args:
-            ligand_list: List of paths to ligand files
-            pocket_list: List of paths to protein pocket files
-            ref_lig_list: List of paths to reference ligand files
-            out_dir: Output directory for docking results
-
-        Returns:
-            List of paths to the docked pose files
-        """
-        docked_poses = []
-
-        for i, (ligand, pocket) in enumerate(zip(ligand_list, pocket_list)):
+        # Perform docking for each protein-ligand pair
+        for i, (ligand, protein) in enumerate(zip(ligand_list, protein_list)):
             try:
-                # Use the original reference ligand if available
+                # Get the reference ligand for this pair
                 ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
 
                 # Ensure a valid reference ligand is provided
                 if ref_lig is None or not os.path.exists(ref_lig):
                     raise ApoDockError(
-                        f"Missing or invalid reference ligand for docking ligand {ligand} with pocket {pocket}. "
+                        f"Missing or invalid reference ligand for docking ligand {ligand} with protein {protein}. "
                         f"Reference ligand is required to define the binding site."
                     )
 
-                # Dock the ligand to the pocket
+                # Dock the ligand to the protein
                 docked_pose = self.dock(
                     ligand=ligand,
-                    protein=pocket,
+                    protein=protein,
                     ref_lig=ref_lig,
                     out_dir=out_dir,
-                    use_packing=False,
+                    use_packing=is_packed,
                 )
                 docked_poses.append(docked_pose)
+                corresponding_proteins.append(protein)
             except Exception as e:
-                logger.error(f"Failed to dock {ligand} to {pocket}: {str(e)}")
+                logger.warning(f"Failed to dock {ligand} to {protein}: {str(e)}")
 
-        return docked_poses
+        return docked_poses, corresponding_proteins

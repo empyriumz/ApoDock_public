@@ -3,7 +3,6 @@
 
 # General pipeline settings
 output_dir: ./docking_results
-use_packing: true
 # Number of top poses to keep in the final output SDF file
 # For pocket screening, you can set this to a lower value (e.g., 5-10) to reduce file size
 # or use the --screening_mode option to avoid generating large SDF files entirely
@@ -15,6 +14,11 @@ random_seed: 42  # Random seed for reproducibility
 output_scores_file: pocket_scores.csv  # File to save pocket scores to (in screening mode)
 save_poses: false  # Save pose files even in screening mode
 rank_by: aposcore  # Which score to use for ranking pocket designs (options: aposcore, gnina_affinity, gnina_cnn_score, gnina_cnn_affinity)
+
+# Backbone-only structure options
+# Set these options when working with structures that only have backbone atoms (N, CA, C, O)
+skip_pocket_extraction: false  # Set to true if your input is already a pocket (will skip extraction)
+                               # This is especially useful for backbone-only inputs
 
 # Input file settings
 input:

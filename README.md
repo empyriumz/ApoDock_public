@@ -46,7 +46,6 @@ Create a configuration file (e.g., `config.yaml`):
 ```yaml
 # General pipeline settings
 output_dir: ./docking_results
-use_packing: true
 top_k: 40
 pocket_distance: 10.0
 random_seed: 42
@@ -77,12 +76,73 @@ To view the loaded configuration without running the pipeline:
 python -m apodock.docking --config config.yaml --show_config
 ```
 
+### Pipeline Workflow
+
+ApoDock follows this streamlined, intelligent workflow:
+
+1. **Protein Structure Validation**:
+   - The pipeline automatically detects whether input protein structures are backbone-only (containing only N, CA, C, O atoms) or full-atom models.
+   - This detection happens without any manual configuration flags.
+
+2. **Pocket Extraction**:
+   - The pipeline extracts the pocket region from the input protein structure based on the reference ligand position and the configured pocket distance.
+   - For pre-extracted pockets, this step can be skipped by setting `skip_pocket_extraction: true` in the configuration.
+
+3. **Side-Chain Packing** (automatically applied for backbone-only structures):
+   - When a structure is detected as backbone-only, multiple packed protein variants are automatically generated with different side-chain conformations.
+   - These variants are named with the pattern `{protein_id}_pack_{number}` (e.g., "1a0q_pack_24").
+   - For full-atom models, packing is skipped, and the original structure is used directly.
+
+4. **Docking**: 
+   - For backbone-only structures: The ligand is docked to all generated packed variants.
+   - For full-atom structures: The ligand is docked to the original structure with existing side chains.
+
+5. **Scoring and Ranking**:
+   - All docked poses are scored using multiple metrics (ApoScore, GNINA affinity, etc.).
+   - Results are ranked according to the selected metric (`rank_by` parameter).
+   - Both original structures (for full-atom inputs) and packed variants (for backbone-only inputs) appear in the rankings.
+
+This approach simplifies the workflow while maintaining all functionality - ApoDock intelligently decides when to apply side-chain packing based on the input structure type.
+
+### Using ApoDock with Backbone-Only Pockets
+
+ApoDock works seamlessly with backbone-only pockets (structures containing only N, CA, C, O atoms):
+
+1. **Input Requirements**:
+   - Provide the backbone-only pocket as `protein_file`.
+   - Provide the ligand as `ligand_file`.
+   - A reference ligand (`ref_lig_file`) is needed to define the binding site location.
+
+2. **Pipeline Behavior with Backbone-Only Inputs**:
+   - The pipeline automatically detects that your input is a backbone-only structure.
+   - Side-chain packing is automatically applied to generate realistic protein models.
+   - Results will show entries with the `_pack_#` suffix, representing different packed variants.
+
+3. **Example Configuration for Backbone-Only Input**:
+   ```yaml
+   # General settings
+   output_dir: ./backbone_docking_results
+   
+   # Input files - backbone-only protein
+   input:
+     protein_file: ./demo/backbone_only/1a0q_backbone.pdb
+     ligand_file: ./demo/backbone_only/1a0q_ligand.sdf
+     ref_lig_file: ./demo/backbone_only/1a0q_ligand.sdf
+   
+   # Skip pocket extraction if already providing a pocket
+   skip_pocket_extraction: true
+   ```
+
+4. **Important Note**:
+   For backbone-only inputs, it's often beneficial to set `skip_pocket_extraction: true` if you're already providing a pre-extracted pocket.
+
 ### Protein Structure Requirements
 
 ApoDock performs automatic validation of protein structure completeness:
 
-- When `use_packing: true` (default): Both complete proteins and backbone-only structures are accepted. For backbone-only structures, the packing algorithm will generate side chains.
-- When `use_packing: false`: Only complete protein structures with side chains are accepted. The pipeline will raise an error if a backbone-only structure is detected to prevent meaningless docking results.
+- Both complete proteins and backbone-only structures are accepted without any special configuration.
+- For backbone-only structures, the packing algorithm will automatically generate side chains.
+- No manual flags or special settings are required - the pipeline intelligently adapts to the input structure type.
 
 ### Pocket Screening Mode
 
@@ -91,7 +151,6 @@ For pocket design screening, create a configuration with screening options:
 ```yaml
 # General settings
 output_dir: ./screening_results
-use_packing: true
 
 # Screening options
 screening_mode: true
@@ -116,7 +175,28 @@ Create different configuration files for different use cases:
 
 ## Output
 
-Results will be saved to the directory specified in the configuration file (`output_dir`). In screening mode, a CSV file with ranking information will be generated.
+Results will be saved to the directory specified in the configuration file (`output_dir`). 
+
+When running in screening mode:
+- A CSV file with ranking information will be generated
+- Results will include scores for the appropriate structures:
+  - For full-atom inputs: the original structure
+  - For backbone-only inputs: the packed variants
+- The ranking output will show entries like:
+  ```
+  Rank 1: 1a0q_pack_24
+    ApoScore: 47.59
+    GNINA Affinity: -7.04
+  Rank 2: 1a0q_pack_23
+    ApoScore: 46.34
+    GNINA Affinity: -7.97
+  ...
+  Rank 4: 1a0q
+    ApoScore: 35.20
+    GNINA Affinity: -6.90
+  ```
+- Entries without the `_pack_#` suffix represent original structures, while those with the suffix represent packed variants
+- Higher rankings for packed variants indicate successful side-chain optimization
 
 ## Advanced Configuration
 
