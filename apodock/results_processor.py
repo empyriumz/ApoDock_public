@@ -141,78 +141,78 @@ class ResultsProcessor:
 
     def process_screening_results(
         self,
-        scores: np.ndarray,
+        scores: Dict[str, List[float]],
         docked_ligands: List[str],
         pocket_files: List[str],
         protein_ids: List[str],
         output_dir: str,
-        output_scores_file: Optional[str] = None,
         rank_by: str = "aposcore",
         save_best_structures: bool = True,
     ) -> Dict[str, Dict[str, float]]:
         """
-        Process scores for screening mode and save best structures.
+        Process scores and save only the best structure and scores.
 
         Args:
-            scores: Array of scores from get_mdn_score
+            scores: Dictionary mapping structure IDs to lists of pose scores
             docked_ligands: List of paths to docked ligand files
             pocket_files: List of paths to protein pocket files used for docking
             protein_ids: List of protein IDs
             output_dir: Output directory for results
-            output_scores_file: Path to save scores (default: None)
             rank_by: Which score to use for ranking (default: "aposcore")
                 Options: "aposcore", "gnina_affinity", "gnina_cnn_score", "gnina_cnn_affinity"
             save_best_structures: Whether to save the best structures (default: True)
 
         Returns:
-            Dictionary mapping protein IDs to their best scores
+            Dictionary containing scores for the best pose
         """
-        logger.info(f"Processing {len(scores)} scores from screening")
+        logger.info("Processing scores and saving best structure...")
 
-        # Dictionary to store best scores for each protein
+        # Dictionary to store best scores
         best_scores = {}
-        # Dictionary to store best structures for each protein
+        # Dictionary to store best structures
         best_structures = {}
 
-        # Process all scores at once - map scores to proteins and track best structures
-        score_index = 0
-        for i, (sdf_file, pocket_file) in enumerate(zip(docked_ligands, pocket_files)):
-            # Extract protein ID
-            protein_id = (
-                protein_ids[i]
-                if i < len(protein_ids)
-                else os.path.basename(os.path.dirname(sdf_file))
+        # Create mapping of pocket files to ligand files
+        pocket_to_ligand = {
+            os.path.splitext(os.path.basename(p))[0]: l
+            for p, l in zip(pocket_files, docked_ligands)
+        }
+
+        # Process each structure's scores
+        for structure_id, pose_scores in scores.items():
+            # Skip if no scores available
+            if not pose_scores:
+                logger.warning(f"No scores available for structure {structure_id}")
+                continue
+
+            # Get corresponding ligand file
+            if structure_id not in pocket_to_ligand:
+                logger.warning(f"No ligand file found for structure {structure_id}")
+                continue
+
+            sdf_file = pocket_to_ligand[structure_id]
+            pocket_file = next(
+                (
+                    p
+                    for p in pocket_files
+                    if structure_id == os.path.splitext(os.path.basename(p))[0]
+                ),
+                None,
             )
 
-            # Read molecules only once
-            mols, _ = read_sdf_file(sdf_file, save_mols=True)
-            if mols is None or len(mols) == 0:
-                logger.warning(f"No valid molecules found in {sdf_file}")
-                continue
-
-            num_mols = len(mols)
-
-            # Get scores for this file
-            if score_index + num_mols <= len(scores):
-                file_scores = scores[score_index : score_index + num_mols]
-                score_index += num_mols
-            else:
-                # Handle case where we don't have enough scores
-                remaining = len(scores) - score_index
-                file_scores = scores[score_index:] if remaining > 0 else []
-                score_index = len(scores)
+            if not pocket_file:
                 logger.warning(
-                    f"Not enough scores for file {sdf_file}: needed {num_mols}, got {len(file_scores)}"
+                    f"Could not find pocket file for structure {structure_id}"
                 )
-
-            if len(file_scores) == 0:
                 continue
 
-            # Get best ApoScore
-            best_aposcore_idx = np.argmax(file_scores)
-            best_aposcore = float(file_scores[best_aposcore_idx])
+            # Get protein ID from the structure ID or directory name
+            protein_id = next(
+                (pid for pid in protein_ids if structure_id.startswith(pid)),
+                os.path.basename(os.path.dirname(sdf_file)),
+            )
 
-            # Initialize score dictionary for this protein
+            # Initialize score dictionary for this protein if not exists
             if protein_id not in best_scores:
                 best_scores[protein_id] = {
                     "aposcore": -float("inf"),
@@ -221,6 +221,8 @@ class ResultsProcessor:
                     "gnina_cnn_affinity": float("inf"),
                 }
 
+            # Get best ApoScore for this structure
+            best_aposcore = max(pose_scores)
             # Extract GNINA scores
             gnina_scores = extract_gnina_scores_from_file(sdf_file)
 
@@ -232,7 +234,7 @@ class ResultsProcessor:
                 best_cnn_score = max(
                     [s["cnn_score"] for s in gnina_scores], default=-float("inf")
                 )
-                best_cnn_affinity = min(
+                best_cnn_affinity = max(
                     [s["cnn_affinity"] for s in gnina_scores], default=float("inf")
                 )
 
@@ -257,13 +259,6 @@ class ResultsProcessor:
                         "ligand": sdf_file,
                     }
 
-        # Save results to CSV file if requested
-        sorted_items = None
-        if output_scores_file:
-            sorted_items = self._save_scores_to_csv(
-                best_scores, output_dir, output_scores_file, rank_by
-            )
-
         # Save best structures if requested
         if save_best_structures and best_scores:
             self._save_best_structures(
@@ -272,29 +267,23 @@ class ResultsProcessor:
 
         return best_scores
 
-    def _save_scores_to_csv(
+    def _save_best_structures(
         self,
         best_scores: Dict[str, Dict[str, float]],
+        best_structures: Dict[str, Dict[str, str]],
         output_dir: str,
-        output_scores_file: str,
-        rank_by: str = "aposcore",
-    ) -> List[Tuple[str, Dict[str, float]]]:
+        rank_by: str,
+    ) -> None:
         """
-        Save scores to a CSV file and return sorted items.
+        Save only the best structure to output directory.
 
         Args:
-            best_scores: Dictionary mapping protein IDs to score dictionaries
+            best_scores: Dictionary of best scores for each protein
+            best_structures: Dictionary of best structures (protein and ligand paths)
             output_dir: Output directory for results
-            output_scores_file: Filename for scores CSV
-            rank_by: Which score to use for ranking
-
-        Returns:
-            List of sorted (protein_id, score_dict) tuples
+            rank_by: Which score to use for ranking ("aposcore", "gnina_affinity", etc.)
         """
-        # Set default output filename if none provided
-        if not output_scores_file.endswith(".csv"):
-            output_scores_file = "pocket_scores.csv"
-        scores_path = os.path.join(output_dir, output_scores_file)
+        import shutil
 
         # Determine sort order based on rank_by parameter
         if rank_by == "aposcore":
@@ -310,261 +299,40 @@ class ResultsProcessor:
             reverse = False  # Lower is better
             sort_key = lambda x: x[1].get("gnina_cnn_affinity", float("inf"))
         else:
-            # Default to ApoScore if invalid rank_by
-            logger.warning(
-                f"Invalid rank_by parameter: {rank_by}. Using aposcore instead."
-            )
+            logger.warning(f"Invalid rank_by value: {rank_by}. Using aposcore instead.")
             rank_by = "aposcore"
             reverse = True
             sort_key = lambda x: x[1].get("aposcore", -float("inf"))
 
-        # Sort the results
+        # Sort proteins by their scores
         sorted_items = sorted(best_scores.items(), key=sort_key, reverse=reverse)
 
-        with open(scores_path, "w") as f:
-            # Write header with all score types
-            f.write(
-                "Rank,Protein_ID,ApoScore,GNINA_Affinity,GNINA_CNN_Score,GNINA_CNN_Affinity\n"
-            )
+        # Save only the top-ranked structure
+        if sorted_items:
+            protein_id, _ = sorted_items[0]  # Get the best protein ID
+            if protein_id in best_structures:
+                structure_info = best_structures[protein_id]
+                protein_dir = os.path.join(output_dir, protein_id)
+                os.makedirs(protein_dir, exist_ok=True)
 
-            # Write sorted results with rank
-            for rank, (protein_id, score_dict) in enumerate(sorted_items, 1):
-                # Get values with defaults for missing scores
-                aposcore = score_dict.get("aposcore", "N/A")
-                gnina_affinity = score_dict.get("gnina_affinity", "N/A")
-                gnina_cnn_score = score_dict.get("gnina_cnn_score", "N/A")
-                gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
+                # Create best structure filenames using rank_by parameter
+                best_protein_filename = f"{protein_id}_best_{rank_by}_protein.pdb"
+                best_ligand_filename = f"{protein_id}_best_{rank_by}_ligand.sdf"
 
-                # Write the scores
-                f.write(
-                    f"{rank},{protein_id},{aposcore},{gnina_affinity},{gnina_cnn_score},{gnina_cnn_affinity}\n"
-                )
-
-        logger.info(f"Saved best scores to {scores_path} (ranked by {rank_by})")
-
-        return sorted_items
-
-    def _save_best_structures(
-        self,
-        best_scores: Dict[str, Dict[str, float]],
-        best_structures: Dict[str, Dict[str, str]],
-        output_dir: str,
-        rank_by: str,
-    ) -> None:
-        """
-        Save best structures to output directory.
-
-        This helper method handles saving the best structures to a permanent location.
-        For each base protein ID, it selects the best variant based on the ranking criterion.
-
-        Args:
-            best_scores: Dictionary of best scores
-            best_structures: Dictionary of best structures (protein and ligand paths)
-            output_dir: Output directory for results
-            rank_by: Which score to use for ranking
-        """
-        import shutil
-
-        # Create a sort key function based on the rank_by parameter
-        if rank_by == "aposcore":
-            # Higher ApoScore is better
-            sort_key = lambda x: best_scores[x].get("aposcore", -float("inf"))
-        elif rank_by == "gnina_affinity":
-            # Lower affinity is better
-            sort_key = lambda x: best_scores[x].get("gnina_affinity", float("inf")) * -1
-        elif rank_by == "gnina_cnn_score":
-            # Higher CNN score is better
-            sort_key = lambda x: best_scores[x].get("gnina_cnn_score", -float("inf"))
-        elif rank_by == "gnina_cnn_affinity":
-            # Lower CNN affinity is better
-            sort_key = (
-                lambda x: best_scores[x].get("gnina_cnn_affinity", float("inf")) * -1
-            )
-        else:
-            # Default to ApoScore
-            sort_key = lambda x: best_scores[x].get("aposcore", -float("inf"))
-
-        # Extract base proteins (without _pack_ suffix) and keep only best variant
-        base_protein_ids = {}
-        for protein_id in best_structures.keys():
-            # Extract base ID (removing _pack_XX suffix if present)
-            base_id = (
-                protein_id.split("_pack_")[0] if "_pack_" in protein_id else protein_id
-            )
-
-            # For each base ID, keep track of its best variant
-            current_variant = base_protein_ids.get(base_id)
-            if current_variant is None or sort_key(protein_id) > sort_key(
-                current_variant
-            ):
-                base_protein_ids[base_id] = protein_id
-
-        logger.info(
-            f"Saving best variant for each base protein ({len(base_protein_ids)} proteins)"
-        )
-
-        # Save best structures for each base protein
-        for base_id, best_variant_id in base_protein_ids.items():
-            best_structure = best_structures[best_variant_id]
-            protein_dir = os.path.join(output_dir, base_id)
-
-            # Ensure directory exists
-            os.makedirs(protein_dir, exist_ok=True)
-
-            # Create best structure filenames
-            best_protein_filename = f"{base_id}_best_{rank_by}_protein.pdb"
-            best_ligand_filename = f"{base_id}_best_{rank_by}_ligand.sdf"
-
-            # Copy the best structures
-            try:
-                shutil.copy2(
-                    best_structure["protein"],
-                    os.path.join(protein_dir, best_protein_filename),
-                )
-                shutil.copy2(
-                    best_structure["ligand"],
-                    os.path.join(protein_dir, best_ligand_filename),
-                )
-                logger.info(f"Saved best structures for {base_id}")
-            except Exception as e:
-                logger.warning(
-                    f"Failed to save best structures for {base_id}: {str(e)}"
-                )
-
-    def process(self, scored_poses: List[tuple], output_dir: str) -> List[str]:
-        """
-        Process scored poses and rank them.
-
-        Args:
-            scored_poses: List of tuples containing (docked_sdf_path, scores) or directly an array of scores
-            output_dir: Output directory for processed results
-
-        Returns:
-            List of paths to the ranked pose files
-        """
-        result_files = []
-
-        # Handle direct scores array from get_mdn_score
-        if isinstance(scored_poses, np.ndarray):
-            logger.warning(
-                "Received raw scores array without file paths, cannot process results"
-            )
-            return result_files
-
-        # Check if we have paired data (docked_sdf, scores) or just a list of files followed by separate scores
-        if all(isinstance(item, tuple) and len(item) == 2 for item in scored_poses):
-            # We have paired data - extract files and scores separately
-            docked_sdfs = [item[0] for item in scored_poses]
-            all_scores = []
-            for _, score in scored_poses:
-                if isinstance(score, (list, np.ndarray)):
-                    all_scores.extend(
-                        score if isinstance(score, list) else score.tolist()
+                # Copy the best structures
+                try:
+                    shutil.copy2(
+                        structure_info["protein"],
+                        os.path.join(protein_dir, best_protein_filename),
                     )
-                else:
-                    all_scores.append(score)
-
-            # Group the SDF files by directory (to handle different ligand/protein pairs)
-            grouped_sdfs = {}
-            for sdf_file in docked_sdfs:
-                dir_key = os.path.dirname(sdf_file)
-                if dir_key not in grouped_sdfs:
-                    grouped_sdfs[dir_key] = []
-                grouped_sdfs[dir_key].append(sdf_file)
-
-            # Process each group
-            for dir_key, sdf_files in grouped_sdfs.items():
-                # Determine if packing was used based on file name pattern
-                use_packing = any(
-                    "Packed" in os.path.basename(f) or "_pack_" in os.path.basename(f)
-                    for f in sdf_files
-                )
-
-                # Get the docking program name from the file path
-                docking_program = "smina"  # Default
-                for f in sdf_files:
-                    if "gnina" in f:
-                        docking_program = "gnina"
-                        break
-
-                # Count total molecules to calculate how many scores we need
-                total_mols = 0
-                mol_counts = []
-                for sdf in sdf_files:
-                    mols, _ = read_sdf_file(sdf, save_mols=True)
-                    if mols is None:
-                        mol_counts.append(0)
-                        continue
-                    mol_counts.append(len(mols))
-                    total_mols += len(mols)
-
-                # If total molecules doesn't match available scores, log warning and continue
-                if total_mols > len(all_scores):
+                    shutil.copy2(
+                        structure_info["ligand"],
+                        os.path.join(protein_dir, best_ligand_filename),
+                    )
+                    logger.info(
+                        f"Saved best structure for {protein_id} (ranked by {rank_by})"
+                    )
+                except Exception as e:
                     logger.warning(
-                        f"Not enough scores ({len(all_scores)}) for all molecules ({total_mols})"
+                        f"Failed to save best structure for {protein_id}: {str(e)}"
                     )
-                    continue
-
-                # Take the appropriate number of scores for this group's molecules
-                group_scores = all_scores[:total_mols]
-                all_scores = all_scores[total_mols:]  # Remove used scores
-
-                # Rank the results
-                ranked_file = self.rank_results(
-                    sdf_files, group_scores, use_packing, docking_program
-                )
-
-                if ranked_file:
-                    result_files.append(ranked_file)
-        else:
-            # Legacy format processing - keep for backward compatibility
-            grouped_poses = {}
-            for pose_info in scored_poses:
-                if len(pose_info) != 2:
-                    logger.warning(f"Unexpected pose info format: {pose_info}")
-                    continue
-
-                docked_sdf, scores = pose_info
-                # Use the directory as a key to group related poses
-                dir_key = os.path.dirname(docked_sdf)
-                if dir_key not in grouped_poses:
-                    grouped_poses[dir_key] = []
-                grouped_poses[dir_key].append((docked_sdf, scores))
-
-            # Process each group of poses
-            for dir_key, pose_group in grouped_poses.items():
-                sdf_files = [p[0] for p in pose_group]
-                # Flatten the scores if they're lists
-                all_scores = []
-                for _, score_list in pose_group:
-                    if isinstance(score_list, list):
-                        all_scores.extend(score_list)
-                    elif isinstance(score_list, (float, int)):
-                        all_scores.append(score_list)
-                    elif isinstance(score_list, np.ndarray):
-                        all_scores.extend(score_list.tolist())
-                    else:
-                        logger.warning(f"Unexpected score type: {type(score_list)}")
-
-                # Determine if packing was used based on file name pattern
-                use_packing = any(
-                    "Packed" in os.path.basename(f) or "_pack_" in os.path.basename(f)
-                    for f in sdf_files
-                )
-
-                # Get the docking program name from the file path
-                docking_program = "smina"  # Default
-                for f in sdf_files:
-                    if "gnina" in f:
-                        docking_program = "gnina"
-                        break
-
-                # Rank the results
-                ranked_file = self.rank_results(
-                    sdf_files, all_scores, use_packing, docking_program
-                )
-
-                if ranked_file:
-                    result_files.append(ranked_file)
-
-        return result_files

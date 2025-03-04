@@ -5,7 +5,7 @@ import torch
 import tempfile
 
 from apodock.config import PipelineConfig
-from apodock.utils import ApoDockError, logger, set_random_seed
+from apodock.utils import logger, set_random_seed
 from apodock.pocket_extractor import PocketExtractor
 from apodock.docking_engine import DockingEngine
 from apodock.results_processor import ResultsProcessor
@@ -45,8 +45,6 @@ class DockingPipeline:
         # Create uninitialized models
         self.pack_model = None
         self.score_model = None
-
-        logger.info("Initializing machine learning models...")
 
         # Always initialize Pack model (will be used for backbone-only structures)
         logger.info(f"Creating Pack model for side-chain packing...")
@@ -139,57 +137,42 @@ class DockingPipeline:
         protein_list: List[str],
         ref_lig_list: List[str],
         save_poses: bool = False,
-        output_scores_file: str = None,
         rank_by: str = "aposcore",
     ) -> Dict[str, Dict[str, float]]:
         """
-        Run the docking pipeline optimized for pocket screening.
-
-        This method focuses on obtaining scores for pocket designs rather than
-        generating detailed pose files. It returns the best score for each pocket
-        and optionally saves these scores to a file.
+        Run the docking pipeline for screening.
 
         Args:
-            ligand_list: List of paths to ligand files
-            protein_list: List of paths to protein files
-            ref_lig_list: List of paths to reference ligand files
-            save_poses: Whether to save the docked poses (default: False)
-            output_scores_file: Path to save the scores (default: None)
+            ligand_list: List of ligand files to dock
+            protein_list: List of protein files to dock to
+            ref_lig_list: List of reference ligand files for defining binding sites
+            save_poses: Whether to save intermediate poses (default: False)
             rank_by: Which score to use for ranking (default: "aposcore")
                 Options: "aposcore", "gnina_affinity", "gnina_cnn_score", "gnina_cnn_affinity"
 
         Returns:
             Dictionary mapping protein IDs to their best scores
         """
-        # Use the configuration from self.config
         config = self.config
-        best_scores = {}  # Initialize return value
-        temp_dir = None  # Track temporary directory if created
-
         try:
             # Validate protein structures to detect backbone-only inputs
             is_backbone_only = self.validate_protein_structure(protein_list)
 
             # Extract protein IDs for directory organization
             protein_ids = [
-                os.path.basename(p).split("_protein")[0] for p in protein_list
+                os.path.splitext(os.path.basename(p))[0] for p in protein_list
             ]
 
             # Create output directory if it doesn't exist
             os.makedirs(config.output_dir, exist_ok=True)
 
-            # Step 1: Extract pockets from proteins using reference ligands
-            # Check if we should skip pocket extraction (for backbone-only pocket inputs)
-            if (
+            # Step 1: Extract pockets from proteins using reference ligands if needed
+            if config.input_is_pocket or (
                 hasattr(config, "skip_pocket_extraction")
                 and config.skip_pocket_extraction
             ):
-                logger.info(
-                    "Skipping pocket extraction as requested (using input proteins as pockets)..."
-                )
-                pocket_list = (
-                    protein_list.copy()
-                )  # Use the input proteins directly as pockets
+                logger.info("Using input proteins directly as pockets...")
+                pocket_list = protein_list.copy()
             else:
                 logger.info("Extracting pockets from proteins...")
                 pocket_list = self.pocket_extractor.extract_pockets(
@@ -205,75 +188,50 @@ class DockingPipeline:
                 working_dir = config.output_dir
                 cleanup_intermediates = False
 
-            # Step 2: Handle docking strategy based on input structure type
-            docked_ligands = []
-            scoring_pocket_files = []
+            # Step 2: Generate and cluster packed structures
+            logger.info("Generating packed protein variants...")
+            # Create a PackingConfig object from our existing config parameters
+            packing_config = PackingConfig(
+                batch_size=config.pack_config.packing_batch_size,
+                number_of_packs_per_design=config.pack_config.packs_per_design,
+                temperature=config.pack_config.temperature,
+                n_recycle=3,
+                resample=True,
+                apo2holo=False,
+            )
 
-            if is_backbone_only:
-                # For backbone-only structures, we need to pack side chains
-                logger.info(
-                    "Generating packed protein variants for backbone-only structures..."
-                )
+            # Run packing with appropriate directory settings
+            cluster_packs_list = sc_pack(
+                ligand_list,
+                pocket_list,
+                protein_list,
+                self.pack_model,
+                config.pack_config.checkpoint_path,
+                config.pack_config.device,
+                working_dir,
+                config=packing_config,
+                ligandmpnn_path=config.pack_config.ligandmpnn_path,
+                num_clusters=config.pack_config.num_clusters,
+                random_seed=config.random_seed,
+                cleanup_intermediates=cleanup_intermediates,
+            )
 
-                # Create a PackingConfig object from our existing config parameters
-                packing_config = PackingConfig(
-                    batch_size=config.pack_config.packing_batch_size,
-                    number_of_packs_per_design=config.pack_config.packs_per_design,
-                    temperature=config.pack_config.temperature,
-                    n_recycle=3,  # Default value
-                    resample=True,  # Default value
-                    apo2holo=False,  # Explicitly set to False
-                )
+            # Step 3: Dock ligands to packed structures
+            logger.info("Docking ligands to packed proteins...")
+            docking_results = self.docking_engine.dock_ligands_to_proteins(
+                ligand_list,
+                cluster_packs_list,
+                ref_lig_list,
+                working_dir,
+                is_packed=True,
+            )
+            docked_ligands, scoring_pocket_files = docking_results
 
-                # Run packing with appropriate directory settings
-                cluster_packs_list = sc_pack(
-                    ligand_list,
-                    pocket_list,
-                    protein_list,
-                    self.pack_model,
-                    config.pack_config.checkpoint_path,
-                    config.pack_config.device,
-                    working_dir,
-                    config=packing_config,
-                    ligandmpnn_path=config.pack_config.ligandmpnn_path,
-                    num_clusters=config.pack_config.num_clusters,
-                    random_seed=config.random_seed,
-                    cleanup_intermediates=cleanup_intermediates,
-                )
-
-                # Dock to packed protein variants
-                logger.info("Docking ligands to packed proteins...")
-                docking_results = self.docking_engine.dock_ligands_to_proteins(
-                    ligand_list,
-                    cluster_packs_list,
-                    ref_lig_list,
-                    working_dir,
-                    is_packed=True,
-                )
-                docked_ligands, scoring_pocket_files = docking_results
-
-                logger.info(
-                    f"Successfully docked to {len(docked_ligands)} packed protein variants"
-                )
-            else:
-                # For full-atom structures, no packing is needed
-                logger.info(
-                    "Docking ligands to original protein structures with side chains..."
-                )
-                docking_results = self.docking_engine.dock_ligands_to_proteins(
-                    ligand_list, pocket_list, ref_lig_list, working_dir, is_packed=False
-                )
-                docked_ligands, scoring_pocket_files = docking_results
-
-                logger.info(
-                    f"Successfully docked to {len(docked_ligands)} protein structures"
-                )
-
-            # Step 3: Score docked poses
+            # Step 4: Score docked poses
             logger.info("Scoring docked poses...")
             scoring_config = ScoringConfig(
-                batch_size=64,  # Default batch size
-                dis_threshold=5.0,  # Default distance threshold
+                batch_size=64,
+                dis_threshold=5.0,
                 output_dir=config.output_dir,
             )
 
@@ -288,20 +246,16 @@ class DockingPipeline:
                 random_seed=config.random_seed,
             )
 
-            # Step 4: Process scores and save best structures using results processor
-            if isinstance(scores, np.ndarray):
-                best_scores = self.results_processor.process_screening_results(
-                    scores,
-                    docked_ligands,
-                    scoring_pocket_files,
-                    protein_ids,
-                    config.output_dir,
-                    output_scores_file,
-                    rank_by,
-                    save_best_structures=True,  # Always save best structures
-                )
-            else:
-                logger.error("Failed to obtain scores from the scoring model")
+            # Step 5: Process scores and save best structures
+            best_scores = self.results_processor.process_screening_results(
+                scores,
+                docked_ligands,
+                scoring_pocket_files,
+                protein_ids,
+                config.output_dir,
+                rank_by,
+                save_best_structures=True,  # Always save best structures
+            )
 
             return best_scores
 
@@ -310,14 +264,10 @@ class DockingPipeline:
             # Clean up GPU memory if available
             try:
                 if torch.cuda.is_available():
-                    if config.pack_config.device.startswith("cuda"):
-                        from apodock.utils import ModelManager
+                    from apodock.utils import ModelManager
 
-                        ModelManager.cleanup_gpu_memory(config.pack_config.device)
-                    if config.aposcore_config.device.startswith("cuda"):
-                        from apodock.utils import ModelManager
-
-                        ModelManager.cleanup_gpu_memory(config.aposcore_config.device)
+                    ModelManager.cleanup_gpu_memory(config.pack_config.device)
+                    ModelManager.cleanup_gpu_memory(config.aposcore_config.device)
             except Exception as cleanup_error:
                 logger.error(f"Error during GPU cleanup: {str(cleanup_error)}")
             raise

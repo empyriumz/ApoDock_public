@@ -14,6 +14,7 @@ from apodock.Aposcore.utils import (
     get_clean_res_list,
     get_protein_feature,
 )
+from apodock.utils import ModelManager, set_random_seed
 from dataclasses import dataclass
 from typing import Optional
 
@@ -248,12 +249,6 @@ def val(model, dataloader, device, dis_threshold=5.0):
     return pred
 
 
-def load_model_for_inference(model, checkpoint_path, device):
-    from apodock.utils import ModelManager
-
-    return ModelManager.load_model(model, checkpoint_path, device)
-
-
 def get_mdn_score(
     sdf_files,
     pocket_files,
@@ -278,15 +273,8 @@ def get_mdn_score(
         random_seed: Random seed for reproducibility (default: 42)
 
     Returns:
-        numpy.ndarray: Array of MDN scores for the docked poses
-
-    Raises:
-        ValueError: If input validation fails
-        RuntimeError: If score calculation fails
+        Dict[str, List[float]]: Dictionary mapping structure IDs to their pose scores
     """
-    # Import ModelManager here to avoid circular imports
-    from apodock.utils import ModelManager, set_random_seed
-
     # Set random seed for reproducibility
     set_random_seed(random_seed, log=True)
 
@@ -305,19 +293,44 @@ def get_mdn_score(
 
     try:
         # Load model for inference
-        model = load_model_for_inference(model, checkpoint_path, device)
+        model = ModelManager.load_model(model, checkpoint_path, device)
 
         # Create dataset and dataloader
         dataset = Dataset_infer(sdf_files, pocket_files)
         dataloader = PLIDataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
         # Calculate scores
-        scores = val(model, dataloader, device, config.dis_threshold)
+        all_scores = val(model, dataloader, device, config.dis_threshold)
+
+        # Map scores back to their structures
+        scores_dict = {}
+        score_idx = 0
+        for sdf_file, pocket_file in zip(sdf_files, pocket_files):
+            # Skip non-packed structures
+            if "_pack_" not in os.path.basename(pocket_file):
+                continue
+
+            # Read molecules to get number of poses
+            mols, _ = read_sdf_file(sdf_file, save_mols=False)
+            if mols is None:
+                continue
+
+            num_poses = len(mols)
+            if score_idx + num_poses <= len(all_scores):
+                structure_id = os.path.splitext(os.path.basename(pocket_file))[0]
+                scores_dict[structure_id] = all_scores[
+                    score_idx : score_idx + num_poses
+                ].tolist()
+                score_idx += num_poses
+            else:
+                print(f"Warning: Not enough scores for {pocket_file}")
+                break
 
         # Clean up GPU memory
         ModelManager.cleanup_gpu_memory(device)
 
-        return scores
+        return scores_dict
+
     except Exception as e:
         # Clean up GPU memory in case of error
         ModelManager.cleanup_gpu_memory(device)

@@ -98,9 +98,12 @@ ApoDock follows this streamlined, intelligent workflow:
    - For full-atom structures: The ligand is docked to the original structure with existing side chains.
 
 5. **Scoring and Ranking**:
-   - All docked poses are scored using multiple metrics (ApoScore, GNINA affinity, etc.).
-   - Results are ranked according to the selected metric (`rank_by` parameter).
-   - Both original structures (for full-atom inputs) and packed variants (for backbone-only inputs) appear in the rankings.
+   - Each docked pose is evaluated using multiple scoring metrics:
+     - ApoScore: Machine learning-based scoring function
+     - GNINA scores: Affinity, CNN score, and CNN affinity
+   - Scores are organized by structure ID, with each structure having multiple pose scores
+   - The best structure is selected based on the highest ApoScore (default) or other specified metrics
+   - Only the best structure and its corresponding scores are saved in the final output
 
 This approach simplifies the workflow while maintaining all functionality - ApoDock intelligently decides when to apply side-chain packing based on the input structure type.
 
@@ -154,7 +157,6 @@ output_dir: ./screening_results
 
 # Screening options
 screening_mode: true
-output_scores_file: pocket_scores.csv
 save_poses: false
 rank_by: aposcore  # Options: aposcore, gnina_affinity, gnina_cnn_score, gnina_cnn_affinity
 
@@ -179,23 +181,27 @@ Results will be saved to the directory specified in the configuration file (`out
 
 When running in screening mode:
 - A CSV file with ranking information will be generated
-- Results will include scores for the appropriate structures:
-  - For full-atom inputs: the original structure
-  - For backbone-only inputs: the packed variants
-- The ranking output will show entries like:
+- For each protein, only the best structure is saved, based on the ranking metric
+- The output includes:
+  - Best structure files: `{protein_id}_best_{rank_by}_protein.pdb` and `{protein_id}_best_{rank_by}_ligand.sdf`
+  - Comprehensive scores dictionary containing:
+    ```
+    {protein_id}: {
+        "aposcore": float,
+        "gnina_affinity": float,
+        "gnina_cnn_score": float,
+        "gnina_cnn_affinity": float
+    }
+    ```
+- The ranking output shows the best structure for each protein with all its scores:
   ```
-  Rank 1: 1a0q_pack_24
-    ApoScore: 47.59
-    GNINA Affinity: -7.04
-  Rank 2: 1a0q_pack_23
-    ApoScore: 46.34
-    GNINA Affinity: -7.97
-  ...
-  Rank 4: 1a0q
-    ApoScore: 35.20
-    GNINA Affinity: -6.90
+  Protein: 1a0q_pack_24
+    ApoScore: 47.59 (higher is better)
+    GNINA Affinity: -7.04 (lower is better)
+    GNINA CNN Score: 0.89 (higher is better)
+    GNINA CNN Affinity: -6.92 (lower is better)
   ```
-- Entries without the `_pack_#` suffix represent original structures, while those with the suffix represent packed variants
+- Only the top-performing structure (based on the specified ranking metric) is saved
 - Higher rankings for packed variants indicate successful side-chain optimization
 
 ## Advanced Configuration

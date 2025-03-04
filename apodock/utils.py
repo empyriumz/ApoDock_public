@@ -7,6 +7,12 @@ import random
 import numpy as np
 
 
+class ApoDockError(Exception):
+    """Custom exception class for ApoDock-specific errors."""
+
+    pass
+
+
 # Configure logger
 logging.basicConfig(
     level=logging.INFO,
@@ -42,12 +48,6 @@ def set_random_seed(seed: int, log: bool = True) -> None:
 
     if log:
         logger.info(f"Random seed set to {seed} for reproducibility")
-
-
-class ApoDockError(Exception):
-    """Custom exception for ApoDock errors."""
-
-    pass
 
 
 def ensure_dir(directory: str) -> None:
@@ -122,13 +122,13 @@ def validate_input_files(
     """
     # Check if files exist
     if not os.path.exists(ligand_file):
-        raise ApoDockError(f"Ligand file not found: {ligand_file}")
+        raise FileNotFoundError(f"Ligand file not found: {ligand_file}")
 
     if not os.path.exists(protein_file):
-        raise ApoDockError(f"Protein file not found: {protein_file}")
+        raise FileNotFoundError(f"Protein file not found: {protein_file}")
 
     if ref_lig_file and not os.path.exists(ref_lig_file):
-        raise ApoDockError(f"Reference ligand file not found: {ref_lig_file}")
+        raise FileNotFoundError(f"Reference ligand file not found: {ref_lig_file}")
 
 
 def parse_gnina_scores(output_text: str) -> List[Dict[str, float]]:

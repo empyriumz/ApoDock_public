@@ -102,7 +102,6 @@ def main():
             [protein_file],
             [ref_lig_file],
             save_poses=config.save_poses,
-            output_scores_file=config.output_scores_file,
             rank_by=config.rank_by,
         )
 
@@ -123,8 +122,8 @@ def main():
                 rank_score = score_dict.get("gnina_cnn_score", -float("inf"))
                 reverse = True  # Higher is better
             elif config.rank_by == "gnina_cnn_affinity":
-                rank_score = score_dict.get("gnina_cnn_affinity", float("inf"))
-                reverse = False  # Lower is better
+                rank_score = score_dict.get("gnina_cnn_affinity", -float("inf"))
+                reverse = True  # Higher is better
 
             # Skip entries with N/A for the ranking score
             if rank_score in [float("inf"), -float("inf")]:
@@ -146,10 +145,10 @@ def main():
             gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
 
             logger.info(f"  Rank {rank}: {protein_id}")
-            logger.info(f"    ApoScore: {aposcore}")
-            logger.info(f"    GNINA Affinity: {gnina_affinity}")
-            logger.info(f"    GNINA CNN Score: {gnina_cnn_score}")
-            logger.info(f"    GNINA CNN Affinity: {gnina_cnn_affinity}")
+            logger.info(f"    ApoScore: {aposcore:.2f}")
+            logger.info(f"    GNINA Affinity: {gnina_affinity:.2f}")
+            logger.info(f"    GNINA CNN Score: {gnina_cnn_score:.2f}")
+            logger.info(f"    GNINA CNN Affinity: {gnina_cnn_affinity:.2f}")
 
             # Log the location of best structure files
             protein_dir = os.path.join(config.output_dir, protein_id)
@@ -165,7 +164,7 @@ def main():
                 )
 
         logger.info(
-            f"Docking completed successfully. Results saved to: {config.output_dir}/{config.output_scores_file if config.output_scores_file else 'output directory'}"
+            f"Docking completed successfully. Results saved to: {config.output_dir}"
         )
 
         return 0

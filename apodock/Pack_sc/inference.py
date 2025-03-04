@@ -2,8 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 from torch_geometric.utils import to_dense_batch
-
-# Import utility functions from inference_utils
+from apodock.utils import ModelManager, set_random_seed
 from apodock.Pack_sc.inference_utils import (
     cluster_pockets,
     get_letter_codes,
@@ -276,15 +275,6 @@ def write_pdbs(
         raise RuntimeError(f"Failed to generate packed structures: {str(e)}") from e
 
 
-def load_pack_model(model, checkpoint_path, device):
-    """
-    Load the packing model from a checkpoint and prepare for inference.
-    """
-    from apodock.utils import ModelManager
-
-    return ModelManager.load_model(model, checkpoint_path, device)
-
-
 def sc_pack(
     ligand_list,
     pocket_list,
@@ -323,8 +313,6 @@ def sc_pack(
         ValueError: If input validation fails
         RuntimeError: If packing or clustering fails
     """
-    # Import ModelManager here to avoid circular imports
-    from apodock.utils import ModelManager, set_random_seed
 
     # Set random seed for reproducibility
     set_random_seed(random_seed, log=True)
@@ -351,7 +339,7 @@ def sc_pack(
         print(f"Starting side-chain packing for {len(ligand_list)} inputs...")
 
         # Step 1: Load model for inference
-        model = load_pack_model(model_sc, checkpoint_path, device)
+        model = ModelManager.load_model(model_sc, checkpoint_path, device)
 
         # Step 2: Generate packed structures
         print(
@@ -376,6 +364,15 @@ def sc_pack(
             print(f"Clustering structures for input {i+1}/{len(packed_files_list)}")
             if not packed_files:
                 print(f"Warning: No packed files generated for input {i+1}. Skipping.")
+                cluster_packs_list.append([])
+                continue
+
+            # Filter out any non-packed structures (i.e., original backbone)
+            packed_files = [f for f in packed_files if "_pack_" in os.path.basename(f)]
+            if not packed_files:
+                print(
+                    f"Warning: No valid packed structures found for input {i+1}. Skipping."
+                )
                 cluster_packs_list.append([])
                 continue
 
@@ -411,14 +408,16 @@ def sc_pack(
                 # Now check if any directories are empty and remove them
                 for dir_path in cleanup_dirs:
                     try:
-                        # Check if directory exists and is empty
-                        if (
-                            os.path.exists(dir_path)
-                            and os.path.isdir(dir_path)
-                            and not os.listdir(dir_path)
-                        ):
-                            os.rmdir(dir_path)
-                            print(f"Removed empty directory: {dir_path}")
+                        if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                            # Only remove directory if it contains no files or only contains log files
+                            files = os.listdir(dir_path)
+                            if not files or all(f.endswith(".log") for f in files):
+                                import shutil
+
+                                shutil.rmtree(dir_path)
+                                print(
+                                    f"Removed empty/intermediate directory: {dir_path}"
+                                )
                     except Exception as e:
                         print(
                             f"Warning: Failed to remove directory {dir_path}: {str(e)}"

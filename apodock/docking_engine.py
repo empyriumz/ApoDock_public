@@ -3,7 +3,7 @@ import subprocess
 from typing import List, Optional, Tuple
 
 from apodock.config import DockingEngineConfig
-from apodock.utils import ensure_dir, ApoDockError, logger
+from apodock.utils import ensure_dir, logger, ApoDockError
 
 
 class DockingEngine:
@@ -182,6 +182,22 @@ class DockingEngine:
             protein_list = flat_protein_list
             ligand_list = flat_ligand_list
             ref_lig_list = flat_ref_lig_list
+
+        # Filter out non-packed structures if is_packed is True
+        if is_packed:
+            filtered_proteins = []
+            filtered_ligands = []
+            filtered_ref_ligs = []
+            for i, protein in enumerate(protein_list):
+                if "_pack_" in os.path.basename(protein):
+                    filtered_proteins.append(protein)
+                    if i < len(ligand_list):
+                        filtered_ligands.append(ligand_list[i])
+                    if i < len(ref_lig_list):
+                        filtered_ref_ligs.append(ref_lig_list[i])
+            protein_list = filtered_proteins
+            ligand_list = filtered_ligands
+            ref_lig_list = filtered_ref_ligs
 
         # Ensure protein and ligand lists have same length
         if len(protein_list) != len(ligand_list):

@@ -76,14 +76,14 @@ class PipelineConfig:
     screening_mode: bool = (
         False  # Run in pocket screening mode (outputs scores only, no pose files)
     )
-    output_scores_file: str = (
-        "pocket_scores.csv"  # File to save pocket scores to (in screening mode)
-    )
     save_poses: bool = False  # Save pose files even in screening mode
     rank_by: str = "aposcore"  # Which score to use for ranking pocket designs
-    # Options for backbone-only inputs
+    # Options for input handling
+    input_is_pocket: bool = (
+        False  # Whether the input protein is already a pocket structure
+    )
     skip_pocket_extraction: bool = (
-        False  # Skip pocket extraction when already providing a pocket
+        False  # Skip pocket extraction (deprecated, use input_is_pocket instead)
     )
 
 
@@ -198,8 +198,6 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
     # Set new options moved from command line arguments
     if "screening_mode" in config_dict:
         pipeline_config.screening_mode = config_dict["screening_mode"]
-    if "output_scores_file" in config_dict:
-        pipeline_config.output_scores_file = config_dict["output_scores_file"]
     if "save_poses" in config_dict:
         pipeline_config.save_poses = config_dict["save_poses"]
     if "rank_by" in config_dict:
@@ -217,7 +215,9 @@ def load_config_from_yaml(yaml_file: str) -> PipelineConfig:
                 f"Invalid rank_by value: {config_dict['rank_by']}. Using default: aposcore"
             )
 
-    # Set new options for backbone-only inputs
+    # Set new options for input handling
+    if "input_is_pocket" in config_dict:
+        pipeline_config.input_is_pocket = config_dict["input_is_pocket"]
     if "skip_pocket_extraction" in config_dict:
         pipeline_config.skip_pocket_extraction = config_dict["skip_pocket_extraction"]
     if "input_is_backbone_only" in config_dict:
