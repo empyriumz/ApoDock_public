@@ -1,0 +1,60 @@
+# ApoDock Configuration File
+# This file contains all settings for the ApoDock pipeline
+
+# General pipeline settings
+output_dir: ./docking_results
+# Number of top poses to keep in the final output SDF file
+# For pocket screening, you can set this to a lower value (e.g., 5-10) to reduce file size
+# or use the --screening_mode option to avoid generating large SDF files entirely
+top_k: 1  # Only keep the best pose
+pocket_distance: 10.0
+random_seed: 42  # Random seed for reproducibility
+
+# Output options
+rank_by: aposcore  # Which score to use for ranking pocket designs (options: aposcore, gnina_affinity, gnina_cnn_score, gnina_cnn_affinity)
+save_poses: false  # Save pose files even in screening mode
+
+# Input handling options
+input_is_pocket: true  # Set to true if the input protein is already a pocket structure
+skip_pocket_extraction: true  # Deprecated: use input_is_pocket instead
+
+# Input file settings
+input:
+  # Input file paths for a single docking run
+  protein_file: /host/generative-protein-design/test_outputs/full_model/get/1a28/1a28_seed0_pocket_backbone.pdb  # Path to the protein file (required)
+  ligand_file: /host/scratch/pocketgen/PDBBind_v2020/refined/1a28/1a28_ligand.sdf   # Path to the ligand file (required)
+  ref_lig_file: /host/scratch/pocketgen/PDBBind_v2020/refined/1a28/1a28_ligand.sdf  # Path to the reference ligand file (optional, for defining the binding site)
+
+# Pack model settings
+pack:
+  checkpoint_path: /host/ApoDock_public/apodock/checkpoints/ApoPack_time_split_0.pt
+  device: cuda
+  packs_per_design: 40
+  packing_batch_size: 16
+  temperature: 2.0
+  num_clusters: 6
+  ligandmpnn_path: /host/ApoDock_public/apodock/checkpoints/proteinmpnn_v_48_020.pt
+
+# Aposcore model settings
+aposcore:
+  checkpoint_path: /host/ApoDock_public/apodock/checkpoints/ApoScore_time_split_0.pt
+  device: cuda
+  hidden_dim: 256
+  num_heads: 4
+  dropout: 0.1
+  cross_attention: true
+  attention_activation: softmax
+  num_layers: 6
+  interaction_type: product
+  n_gaussians: 10
+
+# Docking engine settings
+docking:
+  num_modes: 30
+  exhaustiveness: 32
+  autobox_add: 6.0
+  # Example box center: [0.0, 0.0, 0.0]
+  box_center: null
+  # Example box size: [20.0, 20.0, 20.0]
+  box_size: null
+  gnina_path: /host/gnina 

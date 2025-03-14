@@ -1,6 +1,6 @@
-.vscode/
-outputs/
 docking_results/
+.vscode/
+.cursor/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 plip_output/
