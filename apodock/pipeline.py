@@ -1,9 +1,6 @@
 import os
 from typing import List, Dict
-import numpy as np
 import torch
-import tempfile
-
 from apodock.config import PipelineConfig
 from apodock.utils import logger, set_random_seed
 from apodock.pocket_extractor import PocketExtractor
@@ -158,13 +155,21 @@ class DockingPipeline:
             # Validate protein structures to detect backbone-only inputs
             is_backbone_only = self.validate_protein_structure(protein_list)
 
-            # Extract protein IDs for directory organization
-            protein_ids = [
+            # Extract protein filenames for directory organization
+            # Use the full name without extension as the protein ID
+            protein_filenames = [
                 os.path.splitext(os.path.basename(p))[0] for p in protein_list
             ]
 
             # Create output directory if it doesn't exist
             os.makedirs(config.output_dir, exist_ok=True)
+
+            # Create protein-specific directories using full protein filenames
+            protein_dirs = {}
+            for protein_filename in protein_filenames:
+                protein_dir = os.path.join(config.output_dir, protein_filename)
+                os.makedirs(protein_dir, exist_ok=True)
+                protein_dirs[protein_filename] = protein_dir
 
             # Step 1: Extract pockets from proteins using reference ligands if needed
             if config.input_is_pocket or (
@@ -178,15 +183,6 @@ class DockingPipeline:
                 pocket_list = self.pocket_extractor.extract_pockets(
                     protein_list, ref_lig_list, config.output_dir
                 )
-
-            # Determine working directory - use temp dir if not saving poses
-            if not save_poses:
-                temp_dir = tempfile.mkdtemp(prefix="docking_", dir=config.output_dir)
-                working_dir = temp_dir
-                cleanup_intermediates = True
-            else:
-                working_dir = config.output_dir
-                cleanup_intermediates = False
 
             # Step 2: Generate and cluster packed structures
             logger.info("Generating packed protein variants...")
@@ -208,12 +204,12 @@ class DockingPipeline:
                 self.pack_model,
                 config.pack_config.checkpoint_path,
                 config.pack_config.device,
-                working_dir,
+                config.output_dir,  # Pass the base output directory
                 config=packing_config,
                 ligandmpnn_path=config.pack_config.ligandmpnn_path,
                 num_clusters=config.pack_config.num_clusters,
                 random_seed=config.random_seed,
-                cleanup_intermediates=cleanup_intermediates,
+                cleanup_intermediates=not save_poses,  # Cleanup if not saving poses
             )
 
             # Step 3: Dock ligands to packed structures
@@ -222,8 +218,9 @@ class DockingPipeline:
                 ligand_list,
                 cluster_packs_list,
                 ref_lig_list,
-                working_dir,
+                config.output_dir,  # Pass the base output directory
                 is_packed=True,
+                protein_filenames=protein_filenames,  # Pass the full filenames
             )
             docked_ligands, scoring_pocket_files = docking_results
 
@@ -251,7 +248,6 @@ class DockingPipeline:
                 scores,
                 docked_ligands,
                 scoring_pocket_files,
-                protein_ids,
                 config.output_dir,
                 rank_by,
                 save_best_structures=True,  # Always save best structures
@@ -277,19 +273,7 @@ class DockingPipeline:
                 # Clean up pocket extractor temps
                 self.pocket_extractor.cleanup_temp_files()
 
-                # Clean up temp directory if we created one
-                if temp_dir and os.path.exists(temp_dir):
-                    try:
-                        import shutil
-
-                        shutil.rmtree(temp_dir)
-                        logger.debug(f"Removed temporary directory: {temp_dir}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to remove temporary directory {temp_dir}: {str(e)}"
-                        )
-
-                # Additional cleanup for intermediate packed files
+                # Clean up intermediate files
                 if is_backbone_only:
                     self._cleanup_intermediate_files(
                         protein_list, config.output_dir, rank_by

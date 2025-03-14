@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 from torch_geometric.utils import to_dense_batch
-from apodock.utils import ModelManager, set_random_seed
+from apodock.utils import ModelManager, set_random_seed, logger
 from apodock.Pack_sc.inference_utils import (
     cluster_pockets,
     get_letter_codes,
@@ -13,7 +13,6 @@ from apodock.Pack_sc.inference_utils import (
     _update_results_with_batch_data,
     _perform_resampling,
     _create_packing_dataset,
-    _create_output_directories,
     _batch_input_data,
     _batch_residue_info,
     _clear_gpu_memory,
@@ -223,19 +222,23 @@ def write_pdbs(
         config = PackingConfig()
 
     try:
-        # Extract PDB IDs from ligand filenames
-        pdbids = [os.path.basename(lig).split("_ligand")[0] for lig in ligand_list]
+        # Extract full protein filenames without extension
+        protein_filenames = [
+            os.path.splitext(os.path.basename(p))[0] for p in protein_list
+        ]
 
-        # Create per-protein output directories
-        protein_out_dirs = _create_output_directories(pdbids, out_dir)
+        # Create output directories if they don't exist
+        for protein_filename in protein_filenames:
+            protein_dir = os.path.join(out_dir, protein_filename)
+            os.makedirs(protein_dir, exist_ok=True)
 
         # Group inputs by batch size
         batched_data = _batch_input_data(
             ligand_list,
             pocket_list,
             protein_list,
-            pdbids,
-            protein_out_dirs,
+            protein_filenames,  # Pass full filenames instead of PDB IDs
+            out_dir,
             config.batch_size,
         )
 
@@ -264,7 +267,7 @@ def write_pdbs(
             results_list, batched_data, batched_residue_info
         )
 
-        # Group files by PDB ID
+        # Group files by protein filename
         grouped_files = _group_files_by_pdbid(packed_files)
 
         return grouped_files
@@ -336,13 +339,13 @@ def sc_pack(
         if not os.path.exists(out_dir):
             os.makedirs(out_dir, exist_ok=True)
 
-        print(f"Starting side-chain packing for {len(ligand_list)} inputs...")
+        logger.info(f"Starting side-chain packing for {len(ligand_list)} inputs...")
 
         # Step 1: Load model for inference
         model = ModelManager.load_model(model_sc, checkpoint_path, device)
 
         # Step 2: Generate packed structures
-        print(
+        logger.info(
             f"Generating {config.number_of_packs_per_design} packed structures per input..."
         )
         packed_files_list = write_pdbs(
@@ -357,20 +360,23 @@ def sc_pack(
         )
 
         # Step 3: Cluster the packed structures
-        print(f"Clustering packed structures into {num_clusters} clusters per input...")
+        logger.info(
+            f"Clustering packed structures into {num_clusters} clusters per input..."
+        )
         cluster_packs_list = []
 
         for i, packed_files in enumerate(packed_files_list):
-            print(f"Clustering structures for input {i+1}/{len(packed_files_list)}")
             if not packed_files:
-                print(f"Warning: No packed files generated for input {i+1}. Skipping.")
+                logger.warning(
+                    f"Warning: No packed files generated for input {i+1}. Skipping."
+                )
                 cluster_packs_list.append([])
                 continue
 
             # Filter out any non-packed structures (i.e., original backbone)
             packed_files = [f for f in packed_files if "_pack_" in os.path.basename(f)]
             if not packed_files:
-                print(
+                logger.warning(
                     f"Warning: No valid packed structures found for input {i+1}. Skipping."
                 )
                 cluster_packs_list.append([])
@@ -397,13 +403,15 @@ def sc_pack(
                         try:
                             if os.path.exists(file_path):
                                 os.remove(file_path)
-                                print(
+                                logger.info(
                                     f"Removed intermediate packed structure: {file_path}"
                                 )
                                 # Add the directory to our cleanup list
                                 cleanup_dirs.add(os.path.dirname(file_path))
                         except Exception as e:
-                            print(f"Warning: Failed to remove {file_path}: {str(e)}")
+                            logger.warning(
+                                f"Warning: Failed to remove {file_path}: {str(e)}"
+                            )
 
                 # Now check if any directories are empty and remove them
                 for dir_path in cleanup_dirs:
@@ -415,18 +423,15 @@ def sc_pack(
                                 import shutil
 
                                 shutil.rmtree(dir_path)
-                                print(
-                                    f"Removed empty/intermediate directory: {dir_path}"
-                                )
                     except Exception as e:
-                        print(
+                        logger.warning(
                             f"Warning: Failed to remove directory {dir_path}: {str(e)}"
                         )
 
         # Clean up GPU memory
         ModelManager.cleanup_gpu_memory(device)
 
-        print("Side-chain packing completed successfully")
+        logger.info("Side-chain packing completed successfully")
         return cluster_packs_list
 
     except Exception as e:

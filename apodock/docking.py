@@ -1,6 +1,5 @@
 import sys
 import argparse
-import os
 from apodock.config import load_config_from_yaml
 from apodock.utils import (
     logger,
@@ -13,24 +12,11 @@ from apodock.pipeline import DockingPipeline
 
 
 def parse_args():
-    """
-    Parse command line arguments for the docking pipeline.
-
-    Returns:
-        Parsed command-line arguments
-    """
     parser = argparse.ArgumentParser(description="Docking with ApoDock")
 
     # Configuration file - this is the only required parameter
     parser.add_argument(
         "--config", type=str, required=True, help="Path to YAML configuration file"
-    )
-
-    # Option to display the loaded configuration
-    parser.add_argument(
-        "--show_config",
-        action="store_true",
-        help="Display the loaded configuration and exit",
     )
 
     return parser.parse_args()
@@ -47,24 +33,6 @@ def main():
         # Load configuration from YAML
         logger.info(f"Loading configuration from YAML file: {args.config}")
         config = load_config_from_yaml(args.config)
-
-        # If --show_config is specified, display the configuration and exit
-        if args.show_config:
-            logger.info("Loaded configuration:")
-            logger.info(f"  Output directory: {config.output_dir}")
-            logger.info(f"  Top K poses: {config.top_k}")
-            logger.info(f"  Pocket distance: {config.pocket_distance}")
-            logger.info(f"  Random seed: {config.random_seed}")
-            logger.info(f"  Screening mode: {config.screening_mode}")
-            logger.info(f"  Output scores file: {config.output_scores_file}")
-            logger.info(f"  Save poses: {config.save_poses}")
-            logger.info(f"  Rank by: {config.rank_by}")
-            logger.info(f"  Input files:")
-            logger.info(f"    Protein: {config.input_config.protein_file}")
-            logger.info(f"    Ligand: {config.input_config.ligand_file}")
-            logger.info(f"    Reference ligand: {config.input_config.ref_lig_file}")
-            return 0
-
         # Set random seed for reproducibility
         set_random_seed(config.random_seed)
 
@@ -107,61 +75,10 @@ def main():
 
         # Print the best score for each protein
         logger.info("Docking results:")
-
-        # Sort the results based on the selected ranking score
-        sorted_results = []
-        for protein_id, score_dict in best_scores.items():
-            # Get the ranking score with appropriate default
-            if config.rank_by == "aposcore":
-                rank_score = score_dict.get("aposcore", -float("inf"))
-                reverse = True  # Higher is better
-            elif config.rank_by == "gnina_affinity":
-                rank_score = score_dict.get("gnina_affinity", float("inf"))
-                reverse = False  # Lower is better
-            elif config.rank_by == "gnina_cnn_score":
-                rank_score = score_dict.get("gnina_cnn_score", -float("inf"))
-                reverse = True  # Higher is better
-            elif config.rank_by == "gnina_cnn_affinity":
-                rank_score = score_dict.get("gnina_cnn_affinity", -float("inf"))
-                reverse = True  # Higher is better
-
-            # Skip entries with N/A for the ranking score
-            if rank_score in [float("inf"), -float("inf")]:
-                continue
-
-            sorted_results.append((protein_id, score_dict, rank_score))
-
-        # Sort the results
-        sorted_results.sort(key=lambda x: x[2], reverse=reverse)
-
-        # Display the sorted results
-        logger.info(
-            f"Results ranked by {config.rank_by} ({'higher is better' if reverse else 'lower is better'}):"
+        # Use ResultsProcessor to rank and display the results
+        pipeline.results_processor.rank_screening_results(
+            best_scores, rank_by=config.rank_by, output_dir=config.output_dir
         )
-        for rank, (protein_id, score_dict, rank_score) in enumerate(sorted_results, 1):
-            aposcore = score_dict.get("aposcore", "N/A")
-            gnina_affinity = score_dict.get("gnina_affinity", "N/A")
-            gnina_cnn_score = score_dict.get("gnina_cnn_score", "N/A")
-            gnina_cnn_affinity = score_dict.get("gnina_cnn_affinity", "N/A")
-
-            logger.info(f"  Rank {rank}: {protein_id}")
-            logger.info(f"    ApoScore: {aposcore:.2f}")
-            logger.info(f"    GNINA Affinity: {gnina_affinity:.2f}")
-            logger.info(f"    GNINA CNN Score: {gnina_cnn_score:.2f}")
-            logger.info(f"    GNINA CNN Affinity: {gnina_cnn_affinity:.2f}")
-
-            # Log the location of best structure files
-            protein_dir = os.path.join(config.output_dir, protein_id)
-            best_protein_filename = f"{protein_id}_best_{config.rank_by}_protein.pdb"
-            best_ligand_filename = f"{protein_id}_best_{config.rank_by}_ligand.sdf"
-
-            if os.path.exists(os.path.join(protein_dir, best_protein_filename)):
-                logger.info(
-                    f"    Best protein structure: {protein_dir}/{best_protein_filename}"
-                )
-                logger.info(
-                    f"    Best ligand structure: {protein_dir}/{best_ligand_filename}"
-                )
 
         logger.info(
             f"Docking completed successfully. Results saved to: {config.output_dir}"

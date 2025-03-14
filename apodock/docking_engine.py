@@ -45,6 +45,7 @@ class DockingEngine:
         ref_lig: Optional[str] = None,
         out_dir: str = "./",
         use_packing: bool = True,
+        base_filename: Optional[str] = None,
     ) -> str:
         """
         Dock a ligand to a protein using GNINA.
@@ -55,30 +56,32 @@ class DockingEngine:
             ref_lig: Path to the reference ligand (for defining the box), or None
             out_dir: Output directory for docking results
             use_packing: Whether packing was used (affects output file naming)
+            base_filename: The original protein filename to use for directory organization
 
         Returns:
             Path to the output docked poses file
         """
-        # Extract IDs for output file naming
-        ligand_name = os.path.basename(ligand).split(".")[0]
-        protein_name = os.path.basename(protein).split(".")[0]
-        ligand_id = ligand_name.split("_ligand")[0]
-        protein_id = protein_name.split("_protein")[0]
+        if not base_filename:
+            raise ApoDockError(
+                "base_filename must be provided for directory organization"
+            )
 
-        # Create protein-specific output directory
-        protein_out_dir = os.path.join(out_dir, protein_id)
+        # Create protein-specific output directory using the full filename
+        protein_out_dir = os.path.join(out_dir, base_filename)
         ensure_dir(protein_out_dir)
 
-        # Determine output file path based on packing
-        if use_packing:
-            output_path = os.path.join(
-                protein_out_dir,
-                f"{protein_id.split('.')[0]}_gnina_dock_{ligand_id}.sdf",
-            )
-        else:
-            output_path = os.path.join(protein_out_dir, f"gnina_dock_{ligand_id}.sdf")
+        # Extract protein name for output file naming (for packed structures)
+        protein_name = os.path.basename(protein).split(".")[0]
 
-        # Create a log file path to save the docking output
+        # Determine output file path
+        # For packed structures: protein_name_dock.sdf (e.g., 1a28_pack_0_dock.sdf)
+        # For regular structures: base_filename_dock.sdf (e.g., 1a28_seed0_pocket_backbone_dock.sdf)
+        if use_packing:
+            output_path = os.path.join(protein_out_dir, f"{protein_name}_dock.sdf")
+        else:
+            output_path = os.path.join(protein_out_dir, f"{base_filename}_dock.sdf")
+
+        # Create a log file path
         log_path = os.path.join(
             protein_out_dir, f"{os.path.basename(output_path).split('.')[0]}.log"
         )
@@ -142,99 +145,134 @@ class DockingEngine:
         ref_lig_list: List[str],
         out_dir: str,
         is_packed: bool = False,
+        protein_filenames: Optional[List[str]] = None,
     ) -> Tuple[List[str], List[str]]:
         """
         Dock a list of ligands to their corresponding protein structures.
 
-        This method handles both packed and original protein structures.
-
         Args:
             ligand_list: List of paths to ligand files
             protein_list: List of paths to protein structures
-                (can be flattened list of packed variants or list of original pockets)
             ref_lig_list: List of paths to reference ligand files
             out_dir: Output directory for docking results
-            is_packed: Whether the proteins are results of packing (affects naming)
+            is_packed: Whether the proteins are results of packing
+            protein_filenames: List of original protein filenames for directory organization
 
         Returns:
             Tuple containing:
                 - List of paths to the docked pose files
                 - List of paths to the corresponding protein structures used for each pose
-        """
-        docked_poses = []
-        corresponding_proteins = []  # Track which protein was used for each pose
 
-        # Create a flat list if protein_list is a list of lists (from packed proteins)
+        Raises:
+            ApoDockError: If input lists have mismatched lengths or if required files are missing
+        """
+        # Input validation for non-packed case
+        if not isinstance(protein_list[0], list):
+            if len(ligand_list) != len(protein_list):
+                raise ApoDockError(
+                    f"Mismatched input lengths: {len(ligand_list)} ligands but {len(protein_list)} proteins"
+                )
+            if len(ref_lig_list) != len(protein_list):
+                raise ApoDockError(
+                    f"Mismatched input lengths: {len(ref_lig_list)} reference ligands but {len(protein_list)} proteins"
+                )
+            if protein_filenames and len(protein_filenames) != len(protein_list):
+                raise ApoDockError(
+                    f"Mismatched input lengths: {len(protein_filenames)} filenames but {len(protein_list)} proteins"
+                )
+
+        # Flatten packed protein list if needed
         if protein_list and isinstance(protein_list[0], list):
-            # Flatten the list of packed proteins
-            flat_protein_list = [p for sublist in protein_list for p in sublist]
-            # Create matching ligand and reference ligand lists
+            flat_protein_list = []
             flat_ligand_list = []
             flat_ref_lig_list = []
+            flat_filenames = []
 
             for i, packed_proteins in enumerate(protein_list):
-                for _ in packed_proteins:
-                    flat_ligand_list.append(ligand_list[i])
-                    flat_ref_lig_list.append(
-                        ref_lig_list[i] if i < len(ref_lig_list) else None
+                if i >= len(ligand_list) or i >= len(ref_lig_list):
+                    raise ApoDockError(
+                        f"Missing ligand or reference ligand for protein group {i}"
                     )
+
+                for protein in packed_proteins:
+                    flat_protein_list.append(protein)
+                    flat_ligand_list.append(ligand_list[i])
+
+                    if i >= len(ref_lig_list):
+                        raise ApoDockError(
+                            f"Missing reference ligand for protein group {i}"
+                        )
+                    flat_ref_lig_list.append(ref_lig_list[i])
+
+                    if protein_filenames:
+                        if i >= len(protein_filenames):
+                            raise ApoDockError(
+                                f"Missing filename for protein group {i}"
+                            )
+                        flat_filenames.append(protein_filenames[i])
 
             protein_list = flat_protein_list
             ligand_list = flat_ligand_list
             ref_lig_list = flat_ref_lig_list
+            protein_filenames = flat_filenames if flat_filenames else None
 
-        # Filter out non-packed structures if is_packed is True
+        # Filter packed structures if needed
         if is_packed:
-            filtered_proteins = []
-            filtered_ligands = []
-            filtered_ref_ligs = []
-            for i, protein in enumerate(protein_list):
-                if "_pack_" in os.path.basename(protein):
-                    filtered_proteins.append(protein)
-                    if i < len(ligand_list):
-                        filtered_ligands.append(ligand_list[i])
-                    if i < len(ref_lig_list):
-                        filtered_ref_ligs.append(ref_lig_list[i])
-            protein_list = filtered_proteins
-            ligand_list = filtered_ligands
-            ref_lig_list = filtered_ref_ligs
+            if not any("_pack_" in os.path.basename(p) for p in protein_list):
+                raise ApoDockError("No packed structures found when is_packed=True")
 
-        # Ensure protein and ligand lists have same length
-        if len(protein_list) != len(ligand_list):
-            logger.warning(
-                f"Mismatch in lengths: {len(ligand_list)} ligands but {len(protein_list)} proteins. "
-                f"Using the shorter list."
+            filtered_items = [
+                (protein, ligand, ref_lig, filename)
+                for protein, ligand, ref_lig, filename in zip(
+                    protein_list,
+                    ligand_list,
+                    ref_lig_list,
+                    (
+                        protein_filenames
+                        if protein_filenames
+                        else [None] * len(protein_list)
+                    ),
+                )
+                if "_pack_" in os.path.basename(protein)
+            ]
+
+            if not filtered_items:
+                raise ApoDockError("No valid packed structures found for docking")
+
+            protein_list, ligand_list, ref_lig_list, protein_filenames = zip(
+                *filtered_items
             )
-            min_len = min(len(ligand_list), len(protein_list))
-            protein_list = protein_list[:min_len]
-            ligand_list = ligand_list[:min_len]
-            if len(ref_lig_list) > min_len:
-                ref_lig_list = ref_lig_list[:min_len]
+
+        # Validate all files exist before starting docking
+        for protein, ligand, ref_lig in zip(protein_list, ligand_list, ref_lig_list):
+            if not os.path.exists(protein):
+                raise ApoDockError(f"Protein file not found: {protein}")
+            if not os.path.exists(ligand):
+                raise ApoDockError(f"Ligand file not found: {ligand}")
+            if not os.path.exists(ref_lig):
+                raise ApoDockError(f"Reference ligand file not found: {ref_lig}")
 
         # Perform docking for each protein-ligand pair
-        for i, (ligand, protein) in enumerate(zip(ligand_list, protein_list)):
+        docked_poses = []
+        corresponding_proteins = []
+
+        for i, (protein, ligand, ref_lig) in enumerate(
+            zip(protein_list, ligand_list, ref_lig_list)
+        ):
             try:
-                # Get the reference ligand for this pair
-                ref_lig = ref_lig_list[i] if i < len(ref_lig_list) else None
-
-                # Ensure a valid reference ligand is provided
-                if ref_lig is None or not os.path.exists(ref_lig):
-                    raise ApoDockError(
-                        f"Missing or invalid reference ligand for docking ligand {ligand} with protein {protein}. "
-                        f"Reference ligand is required to define the binding site."
-                    )
-
-                # Dock the ligand to the protein
+                base_filename = protein_filenames[i] if protein_filenames else None
                 docked_pose = self.dock(
                     ligand=ligand,
                     protein=protein,
                     ref_lig=ref_lig,
                     out_dir=out_dir,
                     use_packing=is_packed,
+                    base_filename=base_filename,
                 )
                 docked_poses.append(docked_pose)
                 corresponding_proteins.append(protein)
             except Exception as e:
-                logger.warning(f"Failed to dock {ligand} to {protein}: {str(e)}")
+                logger.error(f"Failed to dock {ligand} to {protein}: {str(e)}")
+                raise ApoDockError(f"Docking failed: {str(e)}")
 
         return docked_poses, corresponding_proteins

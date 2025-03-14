@@ -433,31 +433,24 @@ def get_letter_codes(pocket_list):
     return CA_icodes, Chain_letters
 
 
-def _create_output_directories(pdbids, base_dir):
-    """Create output directories for each protein."""
-    out_dirs = []
-    for pdbid in pdbids:
-        protein_dir = os.path.join(base_dir, str(pdbid))
-        if not os.path.exists(protein_dir):
-            os.makedirs(protein_dir, exist_ok=True)
-        out_dirs.append(protein_dir)
-    return out_dirs
-
-
 def _batch_input_data(
-    ligand_list, pocket_list, protein_list, pdbids, out_dirs, batch_size
+    ligand_list,
+    pocket_list,
+    protein_list,
+    protein_filenames,
+    out_dir,
+    batch_size,
 ):
     """Group input data into batches."""
-    pdbid_batches = [
-        pdbids[i : i + batch_size] for i in range(0, len(pdbids), batch_size)
-    ]
-    out_dir_batches = [
-        out_dirs[i : i + batch_size] for i in range(0, len(out_dirs), batch_size)
+    # Create batches using full protein filenames
+    filename_batches = [
+        protein_filenames[i : i + batch_size]
+        for i in range(0, len(protein_filenames), batch_size)
     ]
 
     return {
-        "pdbid_batches": pdbid_batches,
-        "out_dir_batches": out_dir_batches,
+        "pdbid_batches": filename_batches,
+        "out_dir": out_dir,
     }
 
 
@@ -498,10 +491,9 @@ def _write_pdb_files(results_list, batched_data, batched_residue_info):
 
     # For each result in results_list
     for i, results in enumerate(results_list):
-        for result_batch, pdbids, out_dirs, ca_icodes, chain_letters in zip(
+        for result_batch, pdbids, ca_icodes, chain_letters in zip(
             results,
             batched_data["pdbid_batches"],
-            batched_data["out_dir_batches"],
             batched_residue_info["ca_icodes_batches"],
             batched_residue_info["chain_letters_batches"],
         ):
@@ -514,7 +506,8 @@ def _write_pdb_files(results_list, batched_data, batched_residue_info):
 
             # Write PDB file for each structure in batch
             for k, pdbid in enumerate(pdbids):
-                pdb_file = os.path.join(out_dirs[k], f"{pdbid}_pack_{i}.pdb")
+                protein_dir = os.path.join(batched_data["out_dir"], pdbid)
+                pdb_file = os.path.join(protein_dir, f"{pdbid}_pack_{i}.pdb")
 
                 # Prepare B-factors (all zeros)
                 b_factors = torch.zeros_like(result_batch["final_X"][k][:, :, 0])
@@ -537,16 +530,13 @@ def _write_pdb_files(results_list, batched_data, batched_residue_info):
 
 
 def _group_files_by_pdbid(packed_files_list):
-    """Group packed files by their PDB ID."""
-    pdbids = list(
-        set([os.path.basename(f).split("_pack_")[0] for f in packed_files_list])
-    )
+    """Group packed files by their protein filename."""
+    grouped_files = {}
+    for file_path in packed_files_list:
+        # Extract the full protein filename (e.g., "1a28_seed0_pocket_backbone")
+        protein_filename = os.path.basename(os.path.dirname(file_path))
+        if protein_filename not in grouped_files:
+            grouped_files[protein_filename] = []
+        grouped_files[protein_filename].append(file_path)
 
-    return [
-        [
-            f
-            for f in packed_files_list
-            if os.path.basename(f).split("_pack_")[0] == pdbid
-        ]
-        for pdbid in pdbids
-    ]
+    return list(grouped_files.values())
