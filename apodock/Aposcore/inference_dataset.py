@@ -212,9 +212,7 @@ class Dataset_infer(Dataset):
         self._pre_process()
 
     def _pre_process(self):
-        for i, (mol_file, pocket) in enumerate(
-            zip(self.sdf_list_path, self.pocket_list_path)
-        ):
+        for mol_file, pocket in zip(self.sdf_list_path, self.pocket_list_path):
             try:
                 # Check if files exist
                 if not os.path.exists(mol_file):
@@ -361,6 +359,7 @@ def get_mdn_score(
     device,
     config=None,
     random_seed=42,
+    is_packed=True,  # New parameter with default True for backward compatibility
 ):
     """
     Calculate Docking scores for docked poses.
@@ -373,6 +372,7 @@ def get_mdn_score(
         device: Device to run inference on ('cpu', 'cuda', etc.)
         config: ScoringConfig object with scoring parameters (default: None)
         random_seed: Random seed for reproducibility (default: 42)
+        is_packed: Whether the structures are from packing (default: True for backward compatibility)
 
     Returns:
         Dict[str, List[float]]: Dictionary mapping structure IDs to their pose scores
@@ -416,9 +416,10 @@ def get_mdn_score(
             score_idx = 0
 
             for sdf_file, pocket_file in zip(sdf_files, pocket_files):
-                if "_pack_" not in os.path.basename(pocket_file):
+                # Skip filtering for non-packed structures or check for _pack_ in packed structures
+                if is_packed and "_pack_" not in os.path.basename(pocket_file):
                     logger.info(
-                        f"Skipping non-packed structure: {os.path.basename(pocket_file)}"
+                        f"Skipping non-packed structure in packed mode: {os.path.basename(pocket_file)}"
                     )
                     continue
 

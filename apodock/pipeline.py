@@ -241,6 +241,7 @@ class DockingPipeline:
                 config.aposcore_config.device,
                 config=scoring_config,
                 random_seed=config.random_seed,
+                is_packed=True,  # Explicitly set for screening workflow
             )
 
             # Step 5: Process scores and save best structures
@@ -335,3 +336,94 @@ class DockingPipeline:
                     logger.debug(f"Removed empty directory: {dir_path}")
             except Exception as e:
                 logger.warning(f"Failed to remove directory {dir_path}: {str(e)}")
+
+    def dock_and_score(
+        self,
+        ligand_file: str,
+        protein_file: str,
+        rank_by: str = "aposcore",
+    ) -> Dict[str, float]:
+        """
+        Direct docking and scoring for a full-atom protein structure and ligand.
+        This method assumes the protein structure is already a binding pocket and contains all atoms.
+
+        Args:
+            ligand_file: Path to the ligand file to dock
+            protein_file: Path to the full-atom protein structure file (assumed to be a pocket)
+            save_poses: Whether to save intermediate poses (default: False)
+            rank_by: Which score to use for ranking (default: "aposcore")
+                Options: "aposcore", "gnina_affinity", "gnina_cnn_score", "gnina_cnn_affinity"
+
+        Returns:
+            Dictionary containing the best scores for the protein-ligand pair
+        """
+        config = self.config
+        try:
+            # Extract protein filename for directory organization
+            protein_filename = os.path.splitext(os.path.basename(protein_file))[0]
+
+            # Create output directory if it doesn't exist
+            os.makedirs(config.output_dir, exist_ok=True)
+
+            # Create protein-specific directory
+            protein_dir = os.path.join(config.output_dir, protein_filename)
+            os.makedirs(protein_dir, exist_ok=True)
+
+            # Step 1: Dock ligand to protein
+            logger.info("Docking ligand to protein...")
+            docking_results = self.docking_engine.dock_ligands_to_proteins(
+                [ligand_file],  # Convert to list for compatibility
+                [protein_file],  # Use protein directly as pocket
+                [ligand_file],
+                config.output_dir,
+                is_packed=False,  # Indicate this is a full-atom structure
+                protein_filenames=[protein_filename],
+            )
+            docked_ligands, scoring_pocket_files = docking_results
+
+            # Step 2: Score docked poses
+            logger.info("Scoring docked poses...")
+            scoring_config = ScoringConfig(
+                batch_size=64,
+                dis_threshold=5.0,
+                output_dir=config.output_dir,
+            )
+
+            # Get scores for all poses
+            scores = get_mdn_score(
+                docked_ligands,
+                scoring_pocket_files,
+                self.score_model,
+                config.aposcore_config.checkpoint_path,
+                config.aposcore_config.device,
+                config=scoring_config,
+                random_seed=config.random_seed,
+                is_packed=False,  # Set to False for direct docking of full-atom structures
+            )
+
+            # Step 3: Process scores and save best structures
+            best_scores = self.results_processor.process_screening_results(
+                scores,
+                docked_ligands,
+                scoring_pocket_files,
+                config.output_dir,
+                rank_by,
+                save_best_structures=False,
+            )
+
+            # Since we only have one protein, return its scores directly
+            return (
+                best_scores[protein_filename] if protein_filename in best_scores else {}
+            )
+
+        except Exception as e:
+            logger.error(f"Error during docking and scoring: {str(e)}")
+            # Clean up GPU memory if available
+            try:
+                if torch.cuda.is_available():
+                    from apodock.utils import ModelManager
+
+                    ModelManager.cleanup_gpu_memory(config.aposcore_config.device)
+            except Exception as cleanup_error:
+                logger.error(f"Error during GPU cleanup: {str(cleanup_error)}")
+            raise

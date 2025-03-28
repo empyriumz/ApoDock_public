@@ -38,6 +38,36 @@ class DockingEngine:
 
         logger.info(f"GNINA docking engine initialized with random seed: {random_seed}")
 
+    def _create_working_copy(
+        self, file_path: str, work_dir: str, prefix: str = ""
+    ) -> str:
+        """
+        Create a working copy of a file in the specified directory.
+
+        Args:
+            file_path: Path to the original file
+            work_dir: Directory to create the copy in
+            prefix: Optional prefix for the copied file name
+
+        Returns:
+            Path to the working copy
+        """
+        import shutil
+
+        ensure_dir(work_dir)
+
+        # Create a unique name for the working copy
+        base_name = os.path.basename(file_path)
+        if prefix:
+            base_name = f"{prefix}_{base_name}"
+        work_copy_path = os.path.join(work_dir, base_name)
+
+        # Create the copy
+        shutil.copy2(file_path, work_copy_path)
+        logger.debug(f"Created working copy: {work_copy_path}")
+
+        return work_copy_path
+
     def dock(
         self,
         ligand: str,
@@ -49,6 +79,7 @@ class DockingEngine:
     ) -> str:
         """
         Dock a ligand to a protein using GNINA.
+        Creates working copies of all input files to prevent modification of originals.
 
         Args:
             ligand: Path to the ligand file
@@ -70,73 +101,95 @@ class DockingEngine:
         protein_out_dir = os.path.join(out_dir, base_filename)
         ensure_dir(protein_out_dir)
 
-        # Extract protein name for output file naming (for packed structures)
-        protein_name = os.path.basename(protein).split(".")[0]
-
-        # Determine output file path
-        # For packed structures: protein_name_dock.sdf (e.g., 1a28_pack_0_dock.sdf)
-        # For regular structures: base_filename_dock.sdf (e.g., 1a28_seed0_pocket_backbone_dock.sdf)
-        if use_packing:
-            output_path = os.path.join(protein_out_dir, f"{protein_name}_dock.sdf")
-        else:
-            output_path = os.path.join(protein_out_dir, f"{base_filename}_dock.sdf")
-
-        # Create a log file path
-        log_path = os.path.join(
-            protein_out_dir, f"{os.path.basename(output_path).split('.')[0]}.log"
-        )
-
-        # Build and execute docking command
-        if ref_lig:
-            cmd = (
-                f"{self.gnina_path} --receptor {protein} --ligand {ligand} "
-                f"--autobox_ligand {ref_lig} --autobox_add {self.config.autobox_add} "
-                f"--num_modes {self.config.num_modes} --exhaustiveness {self.config.exhaustiveness} "
-                f"--seed {self.random_seed} "
-                f"--out {output_path}"
-            )
-        else:
-            if not (self.config.box_center and self.config.box_size):
-                raise ApoDockError(
-                    "Box center and size must be provided when not using a reference ligand"
-                )
-
-            cmd = (
-                f"{self.gnina_path} -r {protein} -l {ligand} "
-                f"--center_x {self.config.box_center[0]} --center_y {self.config.box_center[1]} "
-                f"--center_z {self.config.box_center[2]} --size_x {self.config.box_size[0]} "
-                f"--size_y {self.config.box_size[1]} --size_z {self.config.box_size[2]} "
-                f"--num_modes {self.config.num_modes} -o {output_path} "
-                f"--exhaustiveness {self.config.exhaustiveness} "
-                f"--seed {self.random_seed}"
-            )
+        # Create a working directory for input file copies
+        work_dir = os.path.join(protein_out_dir, "work")
+        ensure_dir(work_dir)
 
         try:
-            logger.info(f"Running docking command: {cmd}")
-            # Run the command and capture the output
-            with open(log_path, "w") as log_file:
-                process = subprocess.run(
-                    cmd,
-                    shell=True,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                # Write the output to the log file
-                log_file.write(process.stdout)
-
-            logger.info(
-                f"Docking completed. Output saved to {output_path}, log saved to {log_path}"
+            # Create working copies of input files
+            work_protein = self._create_working_copy(protein, work_dir, "protein")
+            work_ligand = self._create_working_copy(ligand, work_dir, "ligand")
+            work_ref_lig = (
+                self._create_working_copy(ref_lig, work_dir, "ref") if ref_lig else None
             )
-            return output_path
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Docking failed: {str(e)}")
-            # If there was output, save it to the log file for debugging
-            if hasattr(e, "output") and e.output:
+
+            # Extract protein name for output file naming (for packed structures)
+            protein_name = os.path.basename(protein).split(".")[0]
+
+            # Determine output file path
+            if use_packing:
+                output_path = os.path.join(protein_out_dir, f"{protein_name}_dock.sdf")
+            else:
+                output_path = os.path.join(protein_out_dir, f"{base_filename}_dock.sdf")
+
+            # Create a log file path
+            log_path = os.path.join(
+                protein_out_dir, f"{os.path.basename(output_path).split('.')[0]}.log"
+            )
+
+            # Build and execute docking command using working copies
+            if work_ref_lig:
+                cmd = (
+                    f"{self.gnina_path} --receptor {work_protein} --ligand {work_ligand} "
+                    f"--autobox_ligand {work_ref_lig} --autobox_add {self.config.autobox_add} "
+                    f"--num_modes {self.config.num_modes} --exhaustiveness {self.config.exhaustiveness} "
+                    f"--seed {self.random_seed} "
+                    f"--out {output_path}"
+                )
+            else:
+                if not (self.config.box_center and self.config.box_size):
+                    raise ApoDockError(
+                        "Box center and size must be provided when not using a reference ligand"
+                    )
+
+                cmd = (
+                    f"{self.gnina_path} -r {work_protein} -l {work_ligand} "
+                    f"--center_x {self.config.box_center[0]} --center_y {self.config.box_center[1]} "
+                    f"--center_z {self.config.box_center[2]} --size_x {self.config.box_size[0]} "
+                    f"--size_y {self.config.box_size[1]} --size_z {self.config.box_size[2]} "
+                    f"--num_modes {self.config.num_modes} -o {output_path} "
+                    f"--exhaustiveness {self.config.exhaustiveness} "
+                    f"--seed {self.random_seed}"
+                )
+
+            try:
+                logger.info(f"Running docking command: {cmd}")
+                # Run the command and capture the output
                 with open(log_path, "w") as log_file:
-                    log_file.write(e.output)
-            raise ApoDockError(f"Docking failed: {str(e)}")
+                    process = subprocess.run(
+                        cmd,
+                        shell=True,
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    # Write the output to the log file
+                    log_file.write(process.stdout)
+
+                logger.info(
+                    f"Docking completed. Output saved to {output_path}, log saved to {log_path}"
+                )
+                return output_path
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Docking failed: {str(e)}")
+                # If there was output, save it to the log file for debugging
+                if hasattr(e, "output") and e.output:
+                    with open(log_path, "w") as log_file:
+                        log_file.write(e.output)
+                raise ApoDockError(f"Docking failed: {str(e)}")
+        finally:
+            # Clean up working directory after docking
+            import shutil
+
+            if os.path.exists(work_dir):
+                try:
+                    shutil.rmtree(work_dir)
+                    logger.debug(f"Cleaned up working directory: {work_dir}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to clean up working directory {work_dir}: {str(e)}"
+                    )
 
     def dock_ligands_to_proteins(
         self,
