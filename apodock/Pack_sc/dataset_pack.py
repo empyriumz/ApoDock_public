@@ -3,12 +3,18 @@ import multiprocessing
 import networkx as nx
 import torch
 from rdkit import Chem
+from rdkit import RDLogger
+import warnings
 from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain
 from apodock.Pack_sc.data_utils import (
     parse_PDB,
     featurize,
     calc_bb_dihedrals,
 )
+
+# Suppress RDKit warnings comprehensively
+RDLogger.DisableLog("rdApp.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="rdkit")
 
 multiprocessing.set_start_method("spawn", force=True)
 from apodock.Pack_sc.model_utils import ProteinMPNN

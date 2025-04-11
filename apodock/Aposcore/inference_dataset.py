@@ -6,6 +6,13 @@ import traceback
 from itertools import repeat
 from torch.utils.data import Dataset, DataLoader
 from rdkit import Chem
+from rdkit import RDLogger
+import warnings
+
+# Suppress RDKit warnings comprehensively
+RDLogger.DisableLog("rdApp.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="rdkit")
+
 from torch_geometric.data import Data
 from torch_geometric.data.batch import Batch
 from torch_scatter import scatter_add

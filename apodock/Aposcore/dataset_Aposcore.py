@@ -1,17 +1,21 @@
 import numpy as np
 import networkx as nx
 import torch
-from rdkit import Chem
 from rdkit import RDLogger
 from rdkit import Chem
 from apodock.Aposcore.common.residue_constants import atom_order
 import warnings
+
+# Suppress RDKit warnings comprehensively
+RDLogger.DisableLog("rdApp.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="rdkit")
+warnings.filterwarnings("ignore")
+
+np.set_printoptions(threshold=np.inf)
+
 from threading import Lock
 
 my_lock = Lock()
-RDLogger.DisableLog("rdApp.*")
-np.set_printoptions(threshold=np.inf)
-warnings.filterwarnings("ignore")
 
 
 def one_of_k_encoding_unk(x, allowable_set):
